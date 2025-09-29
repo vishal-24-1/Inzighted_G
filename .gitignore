@@ -1,0 +1,12 @@
+node_modules/
+venv/
+.venv/
+
+# Ignore environment files (do NOT commit secrets)
+.env
+.env.*
+
+# Ignore Python bytecode cache directories
+__pycache__/
+**/__pycache__/
+

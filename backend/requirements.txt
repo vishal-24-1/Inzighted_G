@@ -1,0 +1,25 @@
+django
+djangorestframework
+djangorestframework-simplejwt
+django-cors-headers
+psycopg2-binary
+pinecone[grpc]>=3.0.0
+langchain
+pypdf
+python-docx
+python-dotenv
+requests
+
+# ML & utility packages
+numpy
+tqdm
+
+# AWS S3 support
+boto3
+
+# Google AI/Vertex AI support
+google-generativeai
+google-genai
+google-cloud-aiplatform
+
+# psycopg placeholder note: psycopg2-binary already included above
