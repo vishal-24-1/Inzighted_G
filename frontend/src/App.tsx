@@ -5,6 +5,9 @@ import PrivateRoute from './components/PrivateRoute';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Home from './pages/Home';
+import ChatBot from './pages/ChatBot';
+import BoostMe from './pages/BoostMe';
+import TutoringChat from './pages/TutoringChat';
 import './App.css';
 
 // Component to handle route redirects based on auth state
@@ -36,6 +39,38 @@ function App() {
               element={
                 <PrivateRoute>
                   <Home />
+                </PrivateRoute>
+              } 
+            />
+            <Route 
+              path="/chat" 
+              element={
+                <PrivateRoute>
+                  <ChatBot />
+                </PrivateRoute>
+              } 
+            />
+            <Route 
+              path="/boost" 
+              element={
+                <PrivateRoute>
+                  <BoostMe />
+                </PrivateRoute>
+              } 
+            />
+            <Route 
+              path="/tutoring/new" 
+              element={
+                <PrivateRoute>
+                  <TutoringChat />
+                </PrivateRoute>
+              } 
+            />
+            <Route 
+              path="/tutoring/:sessionId" 
+              element={
+                <PrivateRoute>
+                  <TutoringChat />
                 </PrivateRoute>
               } 
             />

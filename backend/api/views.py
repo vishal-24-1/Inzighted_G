@@ -6,15 +6,18 @@ from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import (
     RagQuerySerializer, DocumentIngestSerializer, 
     UserRegistrationSerializer, UserLoginSerializer, 
-    UserProfileSerializer, DocumentSerializer
+    UserProfileSerializer, DocumentSerializer,
+    ChatSessionSerializer, ChatSessionListSerializer, ChatMessageSerializer
 )
 from .rag_ingestion import ingest_document, ingest_document_from_s3
-from .rag_query import query_rag
-from .models import User, Document
+from .rag_query import query_rag, generate_tutoring_question
+from .models import User, Document, ChatSession, ChatMessage, SessionInsight
 from .s3_storage import s3_storage
+from .gemini_client import gemini_client
 import os
 import tempfile
 from django.conf import settings
+import time
 
 class RegisterView(APIView):
     """
@@ -171,3 +174,506 @@ class DocumentListView(APIView):
         documents = Document.objects.filter(user=request.user).order_by('-upload_date')
         serializer = DocumentSerializer(documents, many=True)
         return Response(serializer.data)
+
+class ChatBotView(APIView):
+    """
+    API view to handle chatbot conversations using RAG system with user's documents.
+    Manages chat sessions and stores conversation history.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        message = request.data.get('message', '').strip()
+        session_id = request.data.get('session_id')  # Optional: existing session ID
+        document_id = request.data.get('document_id')  # Optional: let chat input start session with doc
+        
+        if not message:
+            return Response(
+                {"error": "Message is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = request.user
+            user_id = str(user.id)
+            
+            # Check if Gemini client is available
+            if not gemini_client.is_available():
+                return Response(
+                    {"error": "AI service is currently unavailable"}, 
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+
+            # Get or create chat session
+            # If creating a new session via chat input and a document_id provided, attach it
+            if not session_id and document_id:
+                # try to resolve the document and ensure it belongs to the user
+                try:
+                    doc = Document.objects.get(id=document_id, user=user)
+                    session_title = f"Chat - {doc.filename}"
+                    chat_session = ChatSession.objects.create(user=user, document=doc, title=session_title)
+                except Document.DoesNotExist:
+                    # fall back to create a regular session
+                    chat_session = self._get_or_create_session(user, session_id)
+            else:
+                chat_session = self._get_or_create_session(user, session_id)
+            
+            # Store user message
+            user_message = ChatMessage.objects.create(
+                session=chat_session,
+                user=user,
+                content=message,
+                is_user_message=True
+            )
+
+            # Use RAG system to get context-aware response from user's documents
+            import time
+            start_time = time.time()
+            
+            response = query_rag(user_id, message)
+            
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Store AI response
+            ai_message = ChatMessage.objects.create(
+                session=chat_session,
+                user=user,
+                content=response,
+                is_user_message=False,
+                response_time_ms=response_time_ms,
+                token_count=len(response.split())  # Rough estimate
+            )
+
+            # Update session timestamp
+            chat_session.save()  # This updates the updated_at field
+
+            return Response({
+                "response": response,
+                "user_message": message,
+                "session_id": str(chat_session.id),
+                "message_id": str(ai_message.id),
+                "response_time_ms": response_time_ms
+            })
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to generate response: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def _get_or_create_session(self, user, session_id=None):
+        """Get existing session or create new one"""
+        if session_id:
+            try:
+                # Try to get existing session
+                session = ChatSession.objects.get(id=session_id, user=user, is_active=True)
+                return session
+            except ChatSession.DoesNotExist:
+                pass
+        
+        # Create new session
+        return ChatSession.objects.create(user=user)
+
+
+class ChatSessionListView(APIView):
+    """
+    API view to list user's chat sessions
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        sessions = ChatSession.objects.filter(user=request.user, is_active=True)
+        serializer = ChatSessionListSerializer(sessions, many=True)
+        return Response(serializer.data)
+
+
+class ChatSessionDetailView(APIView):
+    """
+    API view to get detailed chat session with all messages
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, session_id):
+        try:
+            session = ChatSession.objects.get(id=session_id, user=request.user, is_active=True)
+            serializer = ChatSessionSerializer(session)
+            return Response(serializer.data)
+        except ChatSession.DoesNotExist:
+            return Response(
+                {"error": "Chat session not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+    def delete(self, request, session_id):
+        try:
+            session = ChatSession.objects.get(id=session_id, user=request.user, is_active=True)
+            session.is_active = False
+            session.save()
+            return Response({"message": "Chat session deleted successfully"})
+        except ChatSession.DoesNotExist:
+            return Response(
+                {"error": "Chat session not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class TutoringSessionStartView(APIView):
+    """
+    API view to start a tutoring session.
+    Creates a new ChatSession and generates the first tutoring question.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        document_id = request.data.get('document_id')
+        
+        try:
+            user = request.user
+            user_id = str(user.id)
+            
+            # Verify document exists and belongs to user
+            document = None
+            if document_id:
+                try:
+                    document = Document.objects.get(id=document_id, user=user)
+                    if document.status != 'completed':
+                        return Response(
+                            {"error": f"Document is not ready for tutoring (status: {document.status})"}, 
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                except Document.DoesNotExist:
+                    return Response(
+                        {"error": "Document not found or does not belong to you"}, 
+                        status=status.HTTP_404_NOT_FOUND
+                    )
+            
+            # Check if Gemini client is available
+            if not gemini_client.is_available():
+                return Response(
+                    {"error": "AI tutoring service is currently unavailable"}, 
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE
+                )
+
+            # Create new tutoring session with document association
+            session_title = f"Tutoring Session - {document.filename}" if document else "General Tutoring Session"
+            session = ChatSession.objects.create(
+                user=user,
+                title=session_title,
+                document=document  # Store the selected document for this session
+            )
+            
+            # Generate first tutoring question
+            start_time = time.time()
+            first_question = generate_tutoring_question(user_id, document_id)
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Save the first question as a bot message
+            question_message = ChatMessage.objects.create(
+                session=session,
+                user=user,
+                content=first_question,
+                is_user_message=False,
+                response_time_ms=response_time_ms,
+                token_count=len(first_question.split())
+            )
+
+            return Response({
+                "session_id": str(session.id),
+                "first_question": {
+                    "id": str(question_message.id),
+                    "text": first_question,
+                    "created_at": question_message.created_at.isoformat()
+                }
+            }, status=status.HTTP_201_CREATED)
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to start tutoring session: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TutoringSessionAnswerView(APIView):
+    """
+    API view to handle student answers in a tutoring session.
+    Saves the answer and generates the next question.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, session_id):
+        answer_text = request.data.get('text', '').strip()
+        
+        if not answer_text:
+            return Response(
+                {"error": "Answer text is required"}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        try:
+            user = request.user
+            user_id = str(user.id)
+            
+            # Get the tutoring session
+            try:
+                session = ChatSession.objects.get(id=session_id, user=user, is_active=True)
+            except ChatSession.DoesNotExist:
+                return Response(
+                    {"error": "Tutoring session not found or inactive"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Save student's answer
+            answer_message = ChatMessage.objects.create(
+                session=session,
+                user=user,
+                content=answer_text,
+                is_user_message=True
+            )
+            
+            # Get the document associated with this session for scoped question generation
+            session_document_id = str(session.document.id) if session.document else None
+            if session_document_id:
+                print(f"Generating next question scoped to document: {session.document.filename}")
+            else:
+                print("Generating next question with general scope (no document selected)")
+            
+            # Generate next question using the session's document context
+            start_time = time.time()
+            next_question = generate_tutoring_question(user_id, session_document_id)
+            response_time_ms = int((time.time() - start_time) * 1000)
+            
+            # Save the next question
+            question_message = ChatMessage.objects.create(
+                session=session,
+                user=user,
+                content=next_question,
+                is_user_message=False,
+                response_time_ms=response_time_ms,
+                token_count=len(next_question.split())
+            )
+
+            # Update session timestamp
+            session.save()
+
+            return Response({
+                "next_question": {
+                    "id": str(question_message.id),
+                    "text": next_question,
+                    "created_at": question_message.created_at.isoformat()
+                }
+            })
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to process answer: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TutoringSessionEndView(APIView):
+    """
+    API view to end a tutoring session.
+    Marks the session as inactive, saves final state, and auto-generates insights.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, session_id):
+        try:
+            user = request.user
+            
+            # Get the tutoring session
+            try:
+                session = ChatSession.objects.get(id=session_id, user=user, is_active=True)
+            except ChatSession.DoesNotExist:
+                return Response(
+                    {"error": "Tutoring session not found or already ended"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Mark session as inactive
+            session.is_active = False
+            session.save()
+
+            # Auto-generate insights for this session
+            try:
+                from .insight_generator import generate_insights_for_session
+                insight = generate_insights_for_session(str(session.id))
+                
+                insights_generated = insight is not None
+                insight_status = insight.status if insight else 'failed'
+                
+            except Exception as e:
+                print(f"Error generating insights: {str(e)}")
+                insights_generated = False
+                insight_status = 'failed'
+
+            return Response({
+                "message": "Tutoring session ended successfully",
+                "session_id": str(session.id),
+                "total_messages": session.messages.count(),
+                "insights_generated": insights_generated,
+                "insight_status": insight_status
+            })
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to end session: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class TutoringSessionDetailView(APIView):
+    """
+    API view to get tutoring session details with all messages.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, session_id):
+        try:
+            session = ChatSession.objects.get(id=session_id, user=request.user)
+            serializer = ChatSessionSerializer(session)
+            
+            # Add document information to the response
+            response_data = serializer.data
+            if session.document:
+                response_data['document'] = {
+                    'id': str(session.document.id),
+                    'filename': session.document.filename,
+                    'status': session.document.status
+                }
+            else:
+                response_data['document'] = None
+                
+            return Response(response_data)
+        except ChatSession.DoesNotExist:
+            return Response(
+                {"error": "Tutoring session not found"}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+
+class SessionInsightsView(APIView):
+    """
+    API view to get stored SWOT analysis insights for a tutoring session.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, session_id):
+        try:
+            user = request.user
+            
+            # Get the session
+            try:
+                session = ChatSession.objects.get(id=session_id, user=user)
+            except ChatSession.DoesNotExist:
+                return Response(
+                    {"error": "Session not found"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if insights exist for this session
+            try:
+                insight = session.insight
+            except SessionInsight.DoesNotExist:
+                # Try to generate insights if they don't exist
+                try:
+                    from .insight_generator import generate_insights_for_session
+                    insight = generate_insights_for_session(str(session.id))
+                    
+                    if not insight:
+                        return Response({
+                            "error": "Unable to generate insights for this session",
+                            "reason": "Insufficient data or processing error"
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                        
+                except Exception as e:
+                    return Response({
+                        "error": "Failed to generate insights",
+                        "details": str(e)
+                    }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            # Check if insights are still processing
+            if insight.status == 'processing':
+                return Response({
+                    "message": "Insights are being generated",
+                    "status": "processing",
+                    "session_id": str(session.id)
+                }, status=status.HTTP_202_ACCEPTED)
+            
+            # Check if insights generation failed
+            if insight.status == 'failed':
+                return Response({
+                    "error": "Insights generation failed",
+                    "session_id": str(session.id),
+                    "status": "failed"
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Return successful insights
+            document_name = insight.document.filename if insight.document else session.get_title()
+            
+            return Response({
+                "session_id": str(session.id),
+                "document_name": document_name,
+                "session_title": session.get_title(),
+                "total_qa_pairs": insight.total_qa_pairs,
+                "session_duration": insight.get_session_duration(),
+                "status": insight.status,
+                "insights": {
+                    "strength": insight.strength,
+                    "weakness": insight.weakness,
+                    "opportunity": insight.opportunity,
+                    "threat": insight.threat
+                },
+                "created_at": insight.created_at.isoformat(),
+                "updated_at": insight.updated_at.isoformat()
+            })
+
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to retrieve insights: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class UserSessionsListView(APIView):
+    """
+    API view to list all sessions for a user (for session selection in insights).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        try:
+            # Get all sessions for the user, ordered by most recent
+            sessions = ChatSession.objects.filter(user=request.user).order_by('-updated_at')
+            
+            session_data = []
+            for session in sessions:
+                # Get document name if available
+                document_name = "Unknown Document"
+                try:
+                    # Try to find associated document
+                    if hasattr(session, 'document') and session.document:
+                        document_name = session.document.filename
+                    else:
+                        # Fallback to session title
+                        document_name = session.get_title()
+                except:
+                    document_name = session.get_title()
+                
+                session_data.append({
+                    "id": str(session.id),
+                    "title": session.get_title(),
+                    "document_name": document_name,
+                    "created_at": session.created_at.isoformat(),
+                    "updated_at": session.updated_at.isoformat(),
+                    "is_active": session.is_active,
+                    "message_count": session.messages.count()
+                })
+            
+            return Response(session_data)
+            
+        except Exception as e:
+            return Response(
+                {"error": f"Failed to fetch sessions: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

@@ -198,3 +198,8 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 CORS_ALLOW_CREDENTIALS = True
+
+# Tutoring Configuration
+# ------------------------------------------------------------------------------
+# Maximum number of Q&A pairs before auto-ending session (None = no limit)
+TUTORING_MAX_QA_PAIRS = None  # Disabled by default - users must manually end sessions

@@ -79,4 +79,29 @@ export const documentsAPI = {
   query: (query: string) => api.post('/query/', { query }),
 };
 
+export const chatAPI = {
+  sendMessage: (message: string) => api.post('/chat/', { message }),
+};
+
+export const tutoringAPI = {
+  startSession: (documentId?: string) => 
+    api.post('/tutoring/start/', { document_id: documentId }),
+  
+  submitAnswer: (sessionId: string, text: string) =>
+    api.post(`/tutoring/${sessionId}/answer/`, { text }),
+  
+  endSession: (sessionId: string) =>
+    api.post(`/tutoring/${sessionId}/end/`),
+  
+  getSessionDetail: (sessionId: string) =>
+    api.get(`/tutoring/${sessionId}/`),
+};
+
+export const insightsAPI = {
+  getUserSessions: () => api.get('/sessions/'),
+  
+  getSessionInsights: (sessionId: string) =>
+    api.get(`/sessions/${sessionId}/insights/`),
+};
+
 export default api;

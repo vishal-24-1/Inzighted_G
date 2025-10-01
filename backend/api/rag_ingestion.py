@@ -9,6 +9,14 @@ import docx
 from pypdf import PdfReader
 import tempfile
 
+# Try to import pdfplumber as a fallback for better PDF text extraction
+try:
+    import pdfplumber
+    HAS_PDFPLUMBER = True
+except ImportError:
+    HAS_PDFPLUMBER = False
+    print("pdfplumber not available, using pypdf only")
+
 # --- Initialization Functions ---
 
 def initialize_pinecone():
@@ -58,6 +66,7 @@ def read_pdf_pages(file_path: str) -> list[str]:
     """
     Reads and extracts text from a PDF file, returning a list of page texts.
     Returns one string per page, preserving page boundaries.
+    Uses improved extraction strategies for better text capture.
     """
     try:
         reader = PdfReader(file_path)
@@ -65,12 +74,62 @@ def read_pdf_pages(file_path: str) -> list[str]:
         total_chars = 0
         
         for i, page in enumerate(reader.pages):
-            page_text = page.extract_text() or ""
+            # Try multiple extraction strategies
+            page_text = ""
+            
+            # Strategy 1: Standard extraction
+            try:
+                page_text = page.extract_text() or ""
+            except Exception as e:
+                print(f"Standard extraction failed for page {i+1}: {e}")
+            
+            # Strategy 2: If text is too short, try with different options
+            if len(page_text.strip()) < 50:
+                try:
+                    # Try with layout mode and space width
+                    page_text = page.extract_text(extraction_mode="layout", space_width=200) or ""
+                except Exception:
+                    pass
+            
+            # Strategy 3: If still poor, try plain extraction mode
+            if len(page_text.strip()) < 50:
+                try:
+                    page_text = page.extract_text(extraction_mode="plain") or ""
+                except Exception:
+                    pass
+                    
+            # Strategy 4: Try pdfplumber as fallback if available and extraction is poor
+            if len(page_text.strip()) < 50 and HAS_PDFPLUMBER:
+                try:
+                    with pdfplumber.open(file_path) as pdf:
+                        if i < len(pdf.pages):
+                            plumber_text = pdf.pages[i].extract_text() or ""
+                            if len(plumber_text.strip()) > len(page_text.strip()):
+                                page_text = plumber_text
+                                print(f"Page {i+1}: Used pdfplumber fallback")
+                except Exception as e:
+                    print(f"pdfplumber fallback failed for page {i+1}: {e}")
+            
+            # Clean up the text
+            page_text = page_text.strip()
+            
+            # Filter out pages with only minimal content (likely headers/footers only)
+            if len(page_text) < 30:
+                print(f"PDF page {i+1}: {len(page_text)} characters extracted (possibly header/footer only)")
+                # Still include it but mark as minimal
+                page_text = f"[Page {i+1} content minimal] " + page_text
+            else:
+                print(f"PDF page {i+1}: {len(page_text)} characters extracted")
+            
             pages.append(page_text)
             total_chars += len(page_text)
-            print(f"PDF page {i+1}: {len(page_text)} characters extracted")
         
         print(f"PDF extraction complete: {len(pages)} pages, {total_chars} total characters")
+        
+        # If total extraction is very poor, log warning
+        if total_chars < 500:
+            print(f"WARNING: PDF extraction yielded very little text ({total_chars} chars). This may be a scanned PDF or have extraction issues.")
+        
         return pages
     except Exception as e:
         print(f"Error reading PDF pages: {e}")

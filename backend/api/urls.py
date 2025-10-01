@@ -2,7 +2,11 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, LoginView, ProfileView,
-    IngestView, QueryView, DocumentListView
+    IngestView, QueryView, DocumentListView,
+    ChatSessionListView, ChatSessionDetailView,
+    TutoringSessionStartView, TutoringSessionAnswerView, 
+    TutoringSessionEndView, TutoringSessionDetailView,
+    SessionInsightsView, UserSessionsListView
 )
 
 urlpatterns = [
@@ -16,4 +20,18 @@ urlpatterns = [
     path('documents/', DocumentListView.as_view(), name='documents'),
     path('ingest/', IngestView.as_view(), name='ingest'),
     path('query/', QueryView.as_view(), name='query'),
+    
+    # Chat Session URLs
+    path('chat/sessions/', ChatSessionListView.as_view(), name='chat_sessions'),
+    path('chat/sessions/<uuid:session_id>/', ChatSessionDetailView.as_view(), name='chat_session_detail'),
+    
+    # Tutoring URLs
+    path('tutoring/start/', TutoringSessionStartView.as_view(), name='tutoring_start'),
+    path('tutoring/<uuid:session_id>/answer/', TutoringSessionAnswerView.as_view(), name='tutoring_answer'),
+    path('tutoring/<uuid:session_id>/end/', TutoringSessionEndView.as_view(), name='tutoring_end'),
+    path('tutoring/<uuid:session_id>/', TutoringSessionDetailView.as_view(), name='tutoring_detail'),
+    
+    # Insights URLs
+    path('sessions/', UserSessionsListView.as_view(), name='user_sessions'),
+    path('sessions/<uuid:session_id>/insights/', SessionInsightsView.as_view(), name='session_insights'),
 ]

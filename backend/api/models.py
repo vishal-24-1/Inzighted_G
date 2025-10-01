@@ -37,3 +37,114 @@ class Document(models.Model):
     
     def __str__(self):
         return f"{self.filename} - {self.user.name}"
+
+
+class ChatSession(models.Model):
+    """
+    Model to track chat sessions for each user
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_sessions')
+    document = models.ForeignKey(Document, on_delete=models.SET_NULL, null=True, blank=True, related_name='chat_sessions', help_text='Document this session is based on (for tutoring sessions)')
+    title = models.CharField(max_length=255, blank=True)  # Auto-generated from first message
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    is_active = models.BooleanField(default=True)
+    
+    class Meta:
+        ordering = ['-updated_at']
+    
+    def __str__(self):
+        return f"Chat Session - {self.user.name} ({self.created_at.strftime('%Y-%m-%d %H:%M')})"
+    
+    def get_title(self):
+        """Generate title from first user message if not set"""
+        if self.title:
+            return self.title
+        
+        first_message = self.messages.filter(is_user_message=True).first()
+        if first_message:
+            # Use first 50 characters of the first message as title
+            title = first_message.content[:50]
+            if len(first_message.content) > 50:
+                title += "..."
+            return title
+        return f"Chat {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+
+
+class ChatMessage(models.Model):
+    """
+    Model to store individual chat messages within a session
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='messages')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='chat_messages')
+    content = models.TextField()
+    is_user_message = models.BooleanField()  # True for user messages, False for AI responses
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    # Optional fields for tracking AI response metadata
+    response_time_ms = models.IntegerField(null=True, blank=True)  # Time taken to generate response
+    token_count = models.IntegerField(null=True, blank=True)  # Approximate token count
+    
+    class Meta:
+        ordering = ['created_at']
+    
+    def __str__(self):
+        message_type = "User" if self.is_user_message else "AI"
+        preview = self.content[:50] + "..." if len(self.content) > 50 else self.content
+        return f"{message_type}: {preview}"
+
+
+class SessionInsight(models.Model):
+    """
+    Model to store SWOT analysis insights for completed tutoring sessions
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.OneToOneField(ChatSession, on_delete=models.CASCADE, related_name='insight')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='session_insights')
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='session_insights', null=True, blank=True)
+    
+    # SWOT Analysis Fields
+    strength = models.TextField(help_text="Student's strengths identified from the session")
+    weakness = models.TextField(help_text="Areas where student needs improvement")
+    opportunity = models.TextField(help_text="Learning opportunities for the student")
+    threat = models.TextField(help_text="Potential challenges or obstacles")
+    
+    # Session Metadata
+    total_qa_pairs = models.IntegerField(default=0, help_text="Total question-answer pairs in the session")
+    session_duration_minutes = models.IntegerField(null=True, blank=True, help_text="Duration of session in minutes")
+    
+    # Processing Status
+    status = models.CharField(max_length=50, choices=[
+        ('pending', 'Pending'),
+        ('processing', 'Processing'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ], default='pending')
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Session Insight"
+        verbose_name_plural = "Session Insights"
+    
+    def __str__(self):
+        return f"Insights for {self.session.get_title()} - {self.user.name}"
+    
+    def get_session_duration(self):
+        """Calculate session duration from first to last message"""
+        if self.session_duration_minutes:
+            return self.session_duration_minutes
+            
+        messages = self.session.messages.all()
+        if messages.count() < 2:
+            return 0
+            
+        first_message = messages.first()
+        last_message = messages.last()
+        duration = (last_message.created_at - first_message.created_at).total_seconds() / 60
+        return round(duration)
