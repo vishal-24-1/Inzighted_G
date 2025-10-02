@@ -1,6 +1,6 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as DjangoUserAdmin
-from .models import User, Document
+from .models import User, Document, TutoringQuestionBatch
 from .models import ChatSession, ChatMessage, SessionInsight
 
 
@@ -81,3 +81,49 @@ class SessionInsightAdmin(admin.ModelAdmin):
 		return "N/A"
 	session_duration_display.short_description = 'Duration'
 	session_duration_display.admin_order_field = 'session_duration_minutes'
+
+
+@admin.register(TutoringQuestionBatch)
+class TutoringQuestionBatchAdmin(admin.ModelAdmin):
+	"""Admin for TutoringQuestionBatch: manage pre-generated question batches for tutoring sessions."""
+	model = TutoringQuestionBatch
+	list_display = ('id', 'session_title', 'user', 'document_name', 'status', 'question_progress', 'created_at')
+	list_filter = ('status', 'created_at', 'updated_at')
+	search_fields = ('user__name', 'user__email', 'session__title', 'document__filename')
+	readonly_fields = ('id', 'created_at', 'updated_at', 'question_progress_display')
+	
+	fieldsets = (
+		('Session Information', {
+			'fields': ('session', 'user', 'document', 'status', 'source_doc_id', 'tenant_tag')
+		}),
+		('Questions', {
+			'fields': ('questions', 'current_question_index', 'total_questions', 'question_progress_display'),
+			'classes': ('wide',)
+		}),
+		('Timestamps', {
+			'fields': ('created_at', 'updated_at'),
+			'classes': ('collapse',)
+		})
+	)
+	
+	def session_title(self, obj):
+		"""Display session title in admin list"""
+		return obj.session.get_title()
+	session_title.short_description = 'Session Title'
+	session_title.admin_order_field = 'session__title'
+	
+	def document_name(self, obj):
+		"""Display document name in admin list"""
+		return obj.document.filename if obj.document else "No Document"
+	document_name.short_description = 'Document'
+	document_name.admin_order_field = 'document__filename'
+	
+	def question_progress(self, obj):
+		"""Display question progress in admin list"""
+		return f"{obj.current_question_index + 1}/{obj.total_questions}"
+	question_progress.short_description = 'Progress'
+	
+	def question_progress_display(self, obj):
+		"""Display detailed question progress"""
+		return f"Question {obj.current_question_index + 1} of {obj.total_questions} ({obj.status})"
+	question_progress_display.short_description = 'Question Progress'

@@ -11,7 +11,7 @@ from .serializers import (
 )
 from .rag_ingestion import ingest_document, ingest_document_from_s3
 from .rag_query import query_rag, generate_tutoring_question
-from .models import User, Document, ChatSession, ChatMessage, SessionInsight
+from .models import User, Document, ChatSession, ChatMessage, SessionInsight, TutoringQuestionBatch
 from .s3_storage import s3_storage
 from .gemini_client import gemini_client
 import os
@@ -185,7 +185,6 @@ class ChatBotView(APIView):
     def post(self, request, *args, **kwargs):
         message = request.data.get('message', '').strip()
         session_id = request.data.get('session_id')  # Optional: existing session ID
-        document_id = request.data.get('document_id')  # Optional: let chat input start session with doc
         
         if not message:
             return Response(
@@ -205,18 +204,7 @@ class ChatBotView(APIView):
                 )
 
             # Get or create chat session
-            # If creating a new session via chat input and a document_id provided, attach it
-            if not session_id and document_id:
-                # try to resolve the document and ensure it belongs to the user
-                try:
-                    doc = Document.objects.get(id=document_id, user=user)
-                    session_title = f"Chat - {doc.filename}"
-                    chat_session = ChatSession.objects.create(user=user, document=doc, title=session_title)
-                except Document.DoesNotExist:
-                    # fall back to create a regular session
-                    chat_session = self._get_or_create_session(user, session_id)
-            else:
-                chat_session = self._get_or_create_session(user, session_id)
+            chat_session = self._get_or_create_session(user, session_id)
             
             # Store user message
             user_message = ChatMessage.objects.create(
@@ -332,18 +320,12 @@ class TutoringSessionStartView(APIView):
             user_id = str(user.id)
             
             # Verify document exists and belongs to user
-            document = None
             if document_id:
                 try:
-                    document = Document.objects.get(id=document_id, user=user)
-                    if document.status != 'completed':
-                        return Response(
-                            {"error": f"Document is not ready for tutoring (status: {document.status})"}, 
-                            status=status.HTTP_400_BAD_REQUEST
-                        )
+                    document = Document.objects.get(id=document_id, user=user, status='completed')
                 except Document.DoesNotExist:
                     return Response(
-                        {"error": "Document not found or does not belong to you"}, 
+                        {"error": "Document not found or not processed yet"}, 
                         status=status.HTTP_404_NOT_FOUND
                     )
             
@@ -354,17 +336,19 @@ class TutoringSessionStartView(APIView):
                     status=status.HTTP_503_SERVICE_UNAVAILABLE
                 )
 
-            # Create new tutoring session with document association
-            session_title = f"Tutoring Session - {document.filename}" if document else "General Tutoring Session"
+            # Create session title
+            session_title = f"Tutoring Session - {document.filename}" if document_id and 'document' in locals() else "General Tutoring Session"
+            
+            # Create new tutoring session
             session = ChatSession.objects.create(
                 user=user,
                 title=session_title,
-                document=document  # Store the selected document for this session
+                document=document if document_id and 'document' in locals() else None
             )
             
             # Generate first tutoring question
             start_time = time.time()
-            first_question = generate_tutoring_question(user_id, document_id)
+            first_question = generate_tutoring_question(user_id, document_id, session_id=str(session.id))
             response_time_ms = int((time.time() - start_time) * 1000)
             
             # Save the first question as a bot message
@@ -430,7 +414,48 @@ class TutoringSessionAnswerView(APIView):
                 is_user_message=True
             )
             
-            # Get the document associated with this session for scoped question generation
+            # Check if we should continue or end the session
+            message_count = session.messages.count()
+            user_answers_count = session.messages.filter(is_user_message=True).count()
+            
+            # Check if we have a question batch for this session
+            question_batch = TutoringQuestionBatch.objects.filter(session=session).first()
+            
+            if question_batch and question_batch.status in ['ready', 'in_progress']:
+                # We have an active question batch - continue until all questions are used
+                print(f"Question batch status: {question_batch.status}, progress: {question_batch.current_question_index + 1}/{question_batch.total_questions}")
+                
+                # Only end if we've exhausted all questions in the batch
+                if not question_batch.has_more_questions() and question_batch.status != 'completed':
+                    # Mark batch as completed
+                    question_batch.status = 'completed'
+                    question_batch.save()
+                    return Response({
+                        "finished": True,
+                        "message": f"Congratulations! You've completed all {question_batch.total_questions} questions in this tutoring session. Excellent work!"
+                    })
+                elif question_batch.status == 'completed':
+                    return Response({
+                        "finished": True,
+                        "message": f"You've already completed all {question_batch.total_questions} questions for this session. Well done!"
+                    })
+            else:
+                # No question batch - use legacy termination logic for backward compatibility
+                # For MVP, continue asking questions until we have at least 2 user answers (minimum requirement)
+                # and a maximum of 6 total messages (3 Q&A pairs)
+                if user_answers_count >= 2 and message_count >= 6:
+                    return Response({
+                        "finished": True,
+                        "message": "Great job! You've completed this tutoring session."
+                    })
+                elif user_answers_count >= 5:  # Maximum 5 answers to prevent overly long sessions
+                    return Response({
+                        "finished": True,
+                        "message": "Excellent work! You've completed an extended tutoring session."
+                    })
+            
+            # Generate next question using the session context
+            start_time = time.time()
             session_document_id = str(session.document.id) if session.document else None
             if session_document_id:
                 print(f"Generating next question scoped to document: {session.document.filename}")
@@ -438,8 +463,7 @@ class TutoringSessionAnswerView(APIView):
                 print("Generating next question with general scope (no document selected)")
             
             # Generate next question using the session's document context
-            start_time = time.time()
-            next_question = generate_tutoring_question(user_id, session_document_id)
+            next_question = generate_tutoring_question(user_id, session_document_id, session_id=session_id)
             response_time_ms = int((time.time() - start_time) * 1000)
             
             # Save the next question
@@ -532,19 +556,7 @@ class TutoringSessionDetailView(APIView):
         try:
             session = ChatSession.objects.get(id=session_id, user=request.user)
             serializer = ChatSessionSerializer(session)
-            
-            # Add document information to the response
-            response_data = serializer.data
-            if session.document:
-                response_data['document'] = {
-                    'id': str(session.document.id),
-                    'filename': session.document.filename,
-                    'status': session.document.status
-                }
-            else:
-                response_data['document'] = None
-                
-            return Response(response_data)
+            return Response(serializer.data)
         except ChatSession.DoesNotExist:
             return Response(
                 {"error": "Tutoring session not found"}, 

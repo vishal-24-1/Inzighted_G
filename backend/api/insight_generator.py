@@ -142,7 +142,15 @@ class InsightGenerator:
             for pair in qa_pairs
         ])
         
-        prompt = f"""Analyze the following tutoring session Q&A pairs and provide SWOT insights about the student's performance.
+        prompt = f"""You are an expert tutor who critically evaluates how students think, respond, and understand concepts. Carefully analyze the following Q&A pairs. For each answer, infer:
+
+- The student’s conceptual understanding
+- Where they are thinking incorrectly
+- How their misunderstandings affect their responses
+- The reasoning they are using instead of the correct one
+- Signs of confusion or misplaced confidence
+
+Then generate a high-impact SWOT analysis that feels like feedback from a real tutor who wants the student to improve quickly.
 
 Session Details:
 - Total Q&A pairs: {len(qa_pairs)}
@@ -151,22 +159,35 @@ Session Details:
 Q&A Pairs:
 {qa_text}
 
-Please provide a detailed SWOT analysis in the following JSON format:
-{{
-    "strength": "Student's key strengths and what they did well",
-    "weakness": "Areas where the student struggled or needs improvement", 
-    "opportunity": "Learning opportunities and potential growth areas",
-    "threat": "Challenges or obstacles that might hinder progress"
-}}
+### OUTPUT IN THIS EXACT JSON FORMAT:
+{
+  "strength": [
+    "Point 1 (specific, encouraging, tied to their correct reasoning)",
+    "Point 2 (acknowledges effort, accuracy, or confidence)"
+  ],
+  "weakness": [
+    "Point 1 (directly calls out a misunderstanding: explain what the student thought vs what is correct)",
+    "Point 2 (links the wrong reasoning to the wrong answer in a strong, corrective tone)"
+  ],
+  "opportunity": [
+    "Point 1 (suggest what they can fix or practice based on the identified misunderstanding)",
+    "Point 2 (show how correcting that specific misconception will level them up)"
+  ],
+  "threat": [
+    "Point 1 (expose how their current misunderstanding or wrong thinking pattern will cause repeated mistakes)",
+    "Point 2 (warn about long-term consequences if this wrong perspective isn't corrected)"
+  ]
+}
 
-Focus on:
-- Understanding of concepts
-- Problem-solving approach
-- Communication clarity
-- Learning progression
-- Areas of confusion
-
-Provide specific, actionable insights based on the actual Q&A content."""
+### TONE & STYLE RULES:
+- Do NOT be generic — reference how they actually answered.
+- Weakness and threat must directly confront incorrect reasoning.
+- Explicitly state: “You are thinking X, but the correct concept is Y.”
+- Highlight how misunderstanding led to wrong answers.
+- Be bold, corrective, and unfiltered — but still goal-oriented.
+- Strengths and opportunities should stay motivating and confidence-building.
+- Do not add any extra commentary or formatting outside the JSON.
+- Each point should be concise, specific, and actionable within 10 to 15 words."""
 
         try:
             # Generate content using Gemini HTTP client
@@ -177,23 +198,35 @@ Provide specific, actionable insights based on the actual Q&A content."""
             import json
             response_text = (response or '').strip()
             
-            # Look for JSON block in the response
-            start_idx = response_text.find('{')
-            end_idx = response_text.rfind('}') + 1
-            
-            if start_idx != -1 and end_idx > start_idx:
-                json_text = response_text[start_idx:end_idx]
-                swot_data = json.loads(json_text)
-                
+            # Look for a JSON block in the response. Use JSONDecoder.raw_decode
+            # to locate the first valid JSON object inside potentially noisy model output.
+            import json
+            decoder = json.JSONDecoder()
+            swot_data = None
+
+            # Scan for the first '{' and try to decode a JSON object from there
+            for pos, ch in enumerate(response_text):
+                if ch != '{':
+                    continue
+                try:
+                    obj, end = decoder.raw_decode(response_text[pos:])
+                    if isinstance(obj, dict):
+                        swot_data = obj
+                        break
+                except json.JSONDecodeError:
+                    # Not a valid JSON object starting at this position; continue scanning
+                    continue
+
+            if swot_data is not None:
                 return {
                     'strength': swot_data.get('strength', 'No specific strengths identified.'),
                     'weakness': swot_data.get('weakness', 'No specific weaknesses identified.'),
                     'opportunity': swot_data.get('opportunity', 'No specific opportunities identified.'),
                     'threat': swot_data.get('threat', 'No specific threats identified.')
                 }
-            else:
-                # Fallback: parse plain text response
-                return self._parse_plain_text_response(response_text)
+
+            # Fallback: parse plain text response if no valid JSON object was found
+            return self._parse_plain_text_response(response_text)
                 
         except Exception as e:
             logger.error(f"Error generating SWOT analysis: {str(e)}")

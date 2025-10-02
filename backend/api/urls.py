@@ -2,7 +2,7 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, LoginView, ProfileView,
-    IngestView, QueryView, DocumentListView,
+    IngestView, QueryView, DocumentListView, ChatBotView,
     ChatSessionListView, ChatSessionDetailView,
     TutoringSessionStartView, TutoringSessionAnswerView, 
     TutoringSessionEndView, TutoringSessionDetailView,
@@ -21,7 +21,8 @@ urlpatterns = [
     path('ingest/', IngestView.as_view(), name='ingest'),
     path('query/', QueryView.as_view(), name='query'),
     
-    # Chat Session URLs
+    # ChatBot URLs
+    path('chat/', ChatBotView.as_view(), name='chatbot'),
     path('chat/sessions/', ChatSessionListView.as_view(), name='chat_sessions'),
     path('chat/sessions/<uuid:session_id>/', ChatSessionDetailView.as_view(), name='chat_session_detail'),
     

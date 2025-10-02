@@ -148,3 +148,65 @@ class SessionInsight(models.Model):
         last_message = messages.last()
         duration = (last_message.created_at - first_message.created_at).total_seconds() / 60
         return round(duration)
+
+
+class TutoringQuestionBatch(models.Model):
+    """
+    Model to store pre-generated batches of tutoring questions for a session
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.OneToOneField(ChatSession, on_delete=models.CASCADE, related_name='question_batch')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='question_batches')
+    document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='question_batches', null=True, blank=True)
+    
+    # Questions stored as JSON array
+    questions = models.JSONField(help_text="Array of pre-generated questions")
+    current_question_index = models.IntegerField(default=0, help_text="Index of the current question being asked")
+    total_questions = models.IntegerField(help_text="Total number of questions in the batch")
+    
+    # Metadata
+    source_doc_id = models.CharField(max_length=255, null=True, blank=True, help_text="Source document ID used for generation")
+    tenant_tag = models.CharField(max_length=255, help_text="Tenant tag for multi-tenancy")
+    
+    # Status and timestamps
+    status = models.CharField(max_length=50, choices=[
+        ('generating', 'Generating'),
+        ('ready', 'Ready'),
+        ('in_progress', 'In Progress'),
+        ('completed', 'Completed'),
+        ('failed', 'Failed'),
+    ], default='generating')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Tutoring Question Batch"
+        verbose_name_plural = "Tutoring Question Batches"
+    
+    def __str__(self):
+        return f"Question Batch for {self.session.get_title()} ({self.current_question_index}/{self.total_questions})"
+    
+    def get_current_question(self):
+        """Get the current question to ask"""
+        if (self.status == 'ready' or self.status == 'in_progress') and self.current_question_index < len(self.questions):
+            return self.questions[self.current_question_index]
+        return None
+    
+    def get_next_question(self):
+        """Move to next question and return it"""
+        if self.current_question_index < len(self.questions) - 1:
+            self.current_question_index += 1
+            self.status = 'in_progress'
+            self.save()
+            return self.questions[self.current_question_index]
+        else:
+            # All questions exhausted
+            self.status = 'completed'
+            self.save()
+            return None
+    
+    def has_more_questions(self):
+        """Check if there are more questions available"""
+        return self.current_question_index < len(self.questions) - 1
