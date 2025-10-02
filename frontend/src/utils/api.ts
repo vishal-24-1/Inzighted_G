@@ -1,6 +1,17 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000/api';
+// Defaults
+const DEFAULT_PROD_API = 'https://server.inzighted.com/api';
+const DEFAULT_DEV_API = 'http://localhost:8000/api';
+const DEFAULT_PROD_PRODUCT_URL = 'https://app.inzighted.com';
+const DEFAULT_DEV_PRODUCT_URL = 'http://localhost:3000';
+
+// Read from environment (REACT_APP_* are embedded at build time by Create React App)
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL ||
+  (process.env.NODE_ENV === 'production' ? DEFAULT_PROD_API : DEFAULT_DEV_API);
+
+export const PRODUCT_URL = process.env.REACT_APP_PRODUCT_URL ||
+  (process.env.NODE_ENV === 'production' ? DEFAULT_PROD_PRODUCT_URL : DEFAULT_DEV_PRODUCT_URL);
 
 // Create axios instance
 const api = axios.create({

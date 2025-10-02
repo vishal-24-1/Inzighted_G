@@ -25,7 +25,7 @@ SECRET_KEY = "django-insecure-&pgzg*q&wfr2u!ng&+(dn-rs%bbhd&@bfv(hptx75$cyp9-4m8
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "https://app.inzighted.com","https://server.inzighted.com"]
 
 
 # Application definition
@@ -191,34 +191,11 @@ SIMPLE_JWT = {
     'BLACKLIST_AFTER_ROTATION': True,
 }
 
-# CORS settings for React frontend
+# CORS Configuration
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",  # React development server
+    "http://localhost:3000",  # React frontend
     "http://127.0.0.1:3000",
+    "https://app.inzighted.com",  # Production URL
 ]
 
 CORS_ALLOW_CREDENTIALS = True
-
-# Token-aware chunking settings
-RAG_TOKEN_CHUNK_SIZE = 400
-RAG_TOKEN_CHUNK_OVERLAP = 50
-RAG_USE_LEGACY_CHUNKER = False
-RAG_USE_GEMINI_TOKENIZER = True
-RAG_SPACY_MODEL = "en_core_web_sm"
-
-# Parallel embedding settings
-EMBEDDING_CONCURRENCY = 5  # Number of parallel embedding requests
-EMBEDDING_MAX_RETRIES = 3  # Retry attempts for failed embedding requests
-EMBEDDING_RETRY_BACKOFF_BASE = 1.0  # Base backoff time in seconds
-EMBEDDING_RETRY_BACKOFF_MAX = 10.0  # Maximum backoff time in seconds
-
-# PDF Extraction Configuration
-PDF_USE_HYBRID_EXTRACTION = True  # Enable OCR fallback for scanned pages
-PDF_OCR_THRESHOLD = 50  # Minimum characters before applying OCR
-PDF_OCR_DPI = 300  # DPI for PDF to image conversion
-TESSERACT_CONFIG = '--psm 1 --oem 3'  # Tesseract OCR configuration
-
-# Tutoring Configuration
-# ------------------------------------------------------------------------------
-# Maximum number of Q&A pairs before auto-ending session (None = no limit)
-TUTORING_MAX_QA_PAIRS = None  # Disabled by default - users must manually end sessions
