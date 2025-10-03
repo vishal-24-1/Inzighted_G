@@ -594,9 +594,10 @@ class SessionInsightsView(APIView):
                     
                     if not insight:
                         return Response({
-                            "error": "Unable to generate insights for this session",
-                            "reason": "Insufficient data or processing error"
-                        }, status=status.HTTP_400_BAD_REQUEST)
+                            "message": "Not enough data to generate insights yet",
+                            "reason": "At least 2 question-answer pairs are needed for analysis",
+                            "session_id": str(session.id)
+                        }, status=status.HTTP_202_ACCEPTED)
                         
                 except Exception as e:
                     return Response({

@@ -40,8 +40,9 @@ class InsightGenerator:
             # Get Q&A pairs from the session
             qa_pairs = self._extract_qa_pairs(session)
             
-            if not qa_pairs:
-                logger.warning(f"No Q&A pairs found for session {session.id}")
+            # Check if we have at least 2 Q&A pairs for meaningful analysis
+            if len(qa_pairs) < 2:
+                logger.warning(f"Insufficient Q&A pairs for session {session.id}: found {len(qa_pairs)}, need at least 2")
                 return None
             
             # Create insight record with pending status
@@ -92,40 +93,55 @@ class InsightGenerator:
         qa_pairs = []
         
         current_question = None
+        current_answers = []  # Collect multiple user messages as one answer
         
         for message in messages:
             if message.is_user_message:
-                # User message (answer to previous question or new question)
+                # User message (answer to previous question)
                 if current_question:
-                    # This is an answer to the previous question
-                    qa_pairs.append({
-                        'question': current_question,
-                        'answer': message.content
-                    })
-                    current_question = None
-                # If no current question, this might be the first message
+                    current_answers.append(message.content)
+                # If no current question, this might be the first user message - skip
             else:
                 # AI message (question)
+                if current_question and current_answers:
+                    # Save the previous Q&A pair
+                    combined_answer = " ".join(current_answers)
+                    qa_pairs.append({
+                        'question': current_question,
+                        'answer': combined_answer
+                    })
+                    current_answers = []
+                
+                # Set new question
                 current_question = message.content
+        
+        # Handle the last Q&A pair if it exists
+        if current_question and current_answers:
+            combined_answer = " ".join(current_answers)
+            qa_pairs.append({
+                'question': current_question,
+                'answer': combined_answer
+            })
         
         return qa_pairs
     
     def _get_session_document(self, session: ChatSession) -> Optional[Document]:
         """
-        Try to identify the document associated with this session.
-        This is a best-effort approach - you might need to adjust based on your data structure.
+        Get the document associated with this session.
         """
         try:
-            # For tutoring sessions, we might be able to infer the document from session title
-            # or from user's recent documents. This is implementation-specific.
-            # For now, return the user's most recent document
+            # First, check if the session has a document directly associated
+            if session.document:
+                return session.document
+            
+            # Fallback: return user's most recent document if no session document
             return session.user.documents.filter(status='completed').order_by('-upload_date').first()
         except Exception:
             return None
     
     def _calculate_session_duration(self, session: ChatSession) -> int:
         """Calculate session duration in minutes."""
-        messages = session.messages.all()
+        messages = session.messages.all().order_by('created_at')
         if messages.count() < 2:
             return 0
             
@@ -160,7 +176,7 @@ Q&A Pairs:
 {qa_text}
 
 ### OUTPUT IN THIS EXACT JSON FORMAT:
-{
+{{
   "strength": [
     "Point 1 (specific, encouraging, tied to their correct reasoning)",
     "Point 2 (acknowledges effort, accuracy, or confidence)"
@@ -177,7 +193,7 @@ Q&A Pairs:
     "Point 1 (expose how their current misunderstanding or wrong thinking pattern will cause repeated mistakes)",
     "Point 2 (warn about long-term consequences if this wrong perspective isn't corrected)"
   ]
-}
+}}
 
 ### TONE & STYLE RULES:
 - Do NOT be generic — reference how they actually answered.

@@ -15,10 +15,10 @@ interface Session {
 }
 
 interface Insights {
-  strength: string;
-  weakness: string;
-  opportunity: string;
-  threat: string;
+  strength: string | string[];
+  weakness: string | string[];
+  opportunity: string | string[];
+  threat: string | string[];
 }
 
 interface SessionInsights {
@@ -64,13 +64,56 @@ const BoostMe: React.FC = () => {
     }
   };
 
+  // Parse SWOT fields which may arrive as stringified Python lists like "['a','b']"
+  const parseSwotField = (value: any): string | string[] => {
+    if (!value && value !== 0) return '';
+    if (Array.isArray(value)) return value;
+    if (typeof value !== 'string') return String(value);
+
+    const s = value.trim();
+
+    // If looks like a list (starts with [ and ends with ]) try to parse
+    if (s.startsWith('[') && s.endsWith(']')) {
+      // Try valid JSON first (in case backend returned JSON)
+      try {
+        return JSON.parse(s);
+      } catch (e) {
+        // Convert Python-style single quotes to double quotes and try again
+        try {
+          const jsonLike = s.replace(/'/g, '"');
+          return JSON.parse(jsonLike);
+        } catch (_) {
+          // Fallback: split on commas and strip quotes
+          const inner = s.slice(1, -1);
+          const parts = inner.split(/\s*,\s*/).map(p => p.replace(/^['"]|['"]$/g, '').trim()).filter(Boolean);
+          return parts;
+        }
+      }
+    }
+
+    return s;
+  };
+
   const loadInsights = async (sessionId: string) => {
     // Clear previous insights immediately so header falls back to selected session
     setInsights(null);
     setLoading(true);
     try {
       const response = await insightsAPI.getSessionInsights(sessionId);
-      setInsights(response.data);
+
+      // Normalize insight fields so the UI can render arrays cleanly
+      const data = response.data as SessionInsights;
+      const parsed = {
+        ...data,
+        insights: {
+          strength: parseSwotField(data.insights?.strength),
+          weakness: parseSwotField(data.insights?.weakness),
+          opportunity: parseSwotField(data.insights?.opportunity),
+          threat: parseSwotField(data.insights?.threat),
+        },
+      } as SessionInsights;
+
+      setInsights(parsed);
       setCurrentCardIndex(0); // Reset to first card
     } catch (error) {
       console.error('Failed to load insights:', error);
@@ -230,7 +273,15 @@ const BoostMe: React.FC = () => {
                       <h3 style={{ color: card.color }}>{card.type}</h3>
                     </div>
                     <div className="card-content">
-                      <p>{card.content}</p>
+                      {Array.isArray(card.content) ? (
+                        <ul className="swot-list">
+                          {card.content.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p>{card.content}</p>
+                      )}
                     </div>
                   </div>
                 ))}
