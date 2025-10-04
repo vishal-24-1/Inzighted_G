@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
+import { GoogleLogin, CredentialResponse } from '@react-oauth/google';
 import './Auth.css';
 
 const Register: React.FC = () => {
@@ -14,7 +15,7 @@ const Register: React.FC = () => {
   const [errors, setErrors] = useState<any>({});
   const [loading, setLoading] = useState(false);
   
-  const { register } = useAuth();
+  const { register, googleLogin } = useAuth();
   const navigate = useNavigate();
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -43,6 +44,37 @@ const Register: React.FC = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Handle Google Registration Success
+  const handleGoogleSuccess = async (credentialResponse: CredentialResponse) => {
+    try {
+      setLoading(true);
+      setErrors({});
+      
+      if (credentialResponse.credential) {
+        await googleLogin(credentialResponse.credential);
+        navigate('/');
+      }
+    } catch (err: any) {
+      console.error('Google registration error:', err);
+      setErrors({
+        non_field_errors: [
+          err.response?.data?.error || 
+          err.response?.data?.detail || 
+          'Google sign-up failed. Please try again.'
+        ]
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Google Registration Error
+  const handleGoogleError = () => {
+    setErrors({
+      non_field_errors: ['Google sign-up was unsuccessful. Please try again.']
+    });
   };
 
   return (
@@ -130,6 +162,22 @@ const Register: React.FC = () => {
             {loading ? 'Creating Profile...' : 'Create Profile'}
           </button>
         </form>
+
+        <div className="divider">
+          <span>OR</span>
+        </div>
+
+        <div className="google-login-container">
+          <GoogleLogin
+            onSuccess={handleGoogleSuccess}
+            onError={handleGoogleError}
+            useOneTap={false}
+            size="large"
+            width="100%"
+            text="signup_with"
+            shape="rectangular"
+          />
+        </div>
 
         <p className="auth-link">
           Already have an account? <Link to="/login">Sign In</Link>

@@ -12,6 +12,12 @@ class User(AbstractUser):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     
+    # Google OAuth fields
+    google_id = models.CharField(max_length=255, unique=True, null=True, blank=True, help_text="Google OAuth user ID")
+    google_access_token = models.TextField(null=True, blank=True, help_text="Google OAuth access token")
+    google_refresh_token = models.TextField(null=True, blank=True, help_text="Google OAuth refresh token")
+    is_google_user = models.BooleanField(default=False, help_text="Whether user signed up via Google")
+    
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username', 'name']
     

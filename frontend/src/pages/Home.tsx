@@ -15,6 +15,7 @@ const Home: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [recognition, setRecognition] = useState<any | null>(null);
   const [showTutoringPopup, setShowTutoringPopup] = useState(false);
+  const [startingSession, setStartingSession] = useState(false);
   const [showDocumentSelector, setShowDocumentSelector] = useState(false);
   const [showProfilePopup, setShowProfilePopup] = useState(false);
   const [lastUploadedDocumentId, setLastUploadedDocumentId] = useState<string | null>(null);
@@ -67,6 +68,16 @@ const Home: React.FC = () => {
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB in bytes
+
+    // Enforce maximum file size before attempting upload
+    if (file.size > MAX_FILE_SIZE) {
+      // Reset file input so user can select again
+      event.target.value = '';
+      // Exact required message
+      alert('File size is too high. Please upload a file that is 5 MB or less.');
+      return;
+    }
 
     setUploading(true);
     try {
@@ -117,7 +128,7 @@ const Home: React.FC = () => {
 
   const handleStartTutoring = async () => {
     if (!lastUploadedDocumentId) return;
-
+    setStartingSession(true);
     try {
       const response = await tutoringAPI.startSession(lastUploadedDocumentId);
       const { session_id } = response.data;
@@ -128,6 +139,8 @@ const Home: React.FC = () => {
 
     } catch (error: any) {
       alert('Failed to start tutoring session: ' + (error.response?.data?.error || 'Unknown error'));
+    } finally {
+      setStartingSession(false);
     }
   };
 
@@ -226,6 +239,16 @@ const Home: React.FC = () => {
           disabled={uploading}
           className="hidden"
         />
+
+        {/* Uploading overlay */}
+        {uploading && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+            <div className="bg-white rounded-lg p-6 flex flex-col items-center">
+              <div className="loading-spinner" style={{ width: 48, height: 48 }}></div>
+              <p className="mt-3 text-gray-700">Uploading and processing document...</p>
+            </div>
+          </div>
+        )}
       </main>
 
       {/* Tutoring Ready Popup */}
@@ -238,12 +261,21 @@ const Home: React.FC = () => {
               <button
                 className="flex-1 bg-blue-600 text-white py-2 rounded-lg"
                 onClick={handleStartTutoring}
+                disabled={startingSession}
               >
-                Start Session
+                {startingSession ? (
+                  <div className="flex items-center justify-center gap-2">
+                    <div className="loading-spinner" style={{ width: 20, height: 20, borderWidth: 2 }}></div>
+                    <span>Starting...</span>
+                  </div>
+                ) : (
+                  'Start Session'
+                )}
               </button>
               <button
                 className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg"
                 onClick={handleCloseTutoringPopup}
+                disabled={startingSession}
               >
                 Later
               </button>
@@ -258,6 +290,7 @@ const Home: React.FC = () => {
           <DocumentSelector
             onDocumentSelect={handleDocumentSelect}
             onCancel={handleCancelDocumentSelection}
+            startingSession={startingSession}
           />
         </div>
       )}

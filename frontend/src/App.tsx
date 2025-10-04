@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './utils/AuthContext';
 import PrivateRoute from './components/PrivateRoute';
 import Login from './pages/Login';
@@ -9,6 +10,9 @@ import ChatBot from './pages/ChatBot';
 import BoostMe from './pages/BoostMe';
 import TutoringChat from './pages/TutoringChat';
 import './App.css';
+
+// Get Google Client ID from environment variables
+const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID || '';
 
 // Component to handle route redirects based on auth state
 const AuthRedirect: React.FC = () => {
@@ -28,57 +32,59 @@ const AuthRedirect: React.FC = () => {
 
 function App() {
   return (
-    <AuthProvider>
-      <Router>
-        <div className="App">
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
-            <Route 
-              path="/" 
-              element={
-                <PrivateRoute>
-                  <Home />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/chat" 
-              element={
-                <PrivateRoute>
-                  <ChatBot />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/boost" 
-              element={
-                <PrivateRoute>
-                  <BoostMe />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/tutoring/new" 
-              element={
-                <PrivateRoute>
-                  <TutoringChat />
-                </PrivateRoute>
-              } 
-            />
-            <Route 
-              path="/tutoring/:sessionId" 
-              element={
-                <PrivateRoute>
-                  <TutoringChat />
-                </PrivateRoute>
-              } 
-            />
-            <Route path="*" element={<AuthRedirect />} />
-          </Routes>
-        </div>
-      </Router>
-    </AuthProvider>
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <AuthProvider>
+        <Router>
+          <div className="App">
+            <Routes>
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
+              <Route 
+                path="/" 
+                element={
+                  <PrivateRoute>
+                    <Home />
+                  </PrivateRoute>
+                } 
+              />
+              <Route 
+                path="/chat" 
+                element={
+                  <PrivateRoute>
+                    <ChatBot />
+                  </PrivateRoute>
+                } 
+              />
+              <Route 
+                path="/boost" 
+                element={
+                  <PrivateRoute>
+                    <BoostMe />
+                  </PrivateRoute>
+                } 
+              />
+              <Route 
+                path="/tutoring/new" 
+                element={
+                  <PrivateRoute>
+                    <TutoringChat />
+                  </PrivateRoute>
+                } 
+              />
+              <Route 
+                path="/tutoring/:sessionId" 
+                element={
+                  <PrivateRoute>
+                    <TutoringChat />
+                  </PrivateRoute>
+                } 
+              />
+              <Route path="*" element={<AuthRedirect />} />
+            </Routes>
+          </div>
+        </Router>
+      </AuthProvider>
+    </GoogleOAuthProvider>
   );
 }
 

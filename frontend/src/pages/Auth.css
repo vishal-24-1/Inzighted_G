@@ -109,3 +109,55 @@
 .auth-link a:hover {
   text-decoration: underline;
 }
+
+/* Google Sign-In Button Styles */
+.google-signin-container {
+  margin: 1.5rem 0;
+  position: relative;
+}
+
+.divider {
+  text-align: center;
+  margin: 1.5rem 0;
+  position: relative;
+}
+
+.divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  width: 100%;
+  height: 1px;
+  background: #ddd;
+}
+
+.divider span {
+  position: relative;
+  background: white;
+  padding: 0 1rem;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.google-signin-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+/* Override Google button default styles to match our design */
+.google-signin-wrapper > div {
+  width: 100% !important;
+}
+
+.google-signin-wrapper > div > div {
+  width: 100% !important;
+}
+
+.google-signin-wrapper button {
+  width: 100% !important;
+  height: 45px !important;
+  border-radius: 5px !important;
+  font-size: 1rem !important;
+}

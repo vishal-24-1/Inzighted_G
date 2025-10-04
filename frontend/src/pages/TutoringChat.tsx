@@ -33,6 +33,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   const [recognition, setRecognition] = useState<any | null>(null);
   const [sessionFinished, setSessionFinished] = useState(false);
   const [showDocumentSelector, setShowDocumentSelector] = useState(false);
+  const [startingSession, setStartingSession] = useState(false);
   const [sessionDocument, setSessionDocument] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -184,7 +185,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
 
   const handleDocumentSelect = async (documentId: string | null) => {
     setShowDocumentSelector(false);
-
+    setStartingSession(true);
     try {
       const response = await tutoringAPI.startSession(documentId || undefined);
       const { session_id } = response.data;
@@ -201,6 +202,8 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       alert('Failed to start tutoring session: ' + (error.response?.data?.error || 'Unknown error'));
       if (onEndSession) onEndSession();
       else navigate('/');
+    } finally {
+      setStartingSession(false);
     }
   };
 
@@ -235,6 +238,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       <DocumentSelector
         onDocumentSelect={handleDocumentSelect}
         onCancel={handleCancelDocumentSelection}
+        startingSession={startingSession}
       />
     );
   }

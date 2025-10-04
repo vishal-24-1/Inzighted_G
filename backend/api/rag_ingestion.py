@@ -8,6 +8,7 @@ from .gemini_client import gemini_client
 import docx
 from pypdf import PdfReader
 import tempfile
+import sentry_sdk
 
 # Try to import pdfplumber as a fallback for better PDF text extraction
 try:
@@ -581,6 +582,7 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
 
     # 2. Download document from S3 to temporary file
     temp_file = None
+    temp_file_path = None
     try:
         # Extract original file extension from S3 key to preserve it for read_document
         original_filename = s3_key.split('/')[-1]
@@ -592,11 +594,26 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
         
         if not s3_storage.download_document(s3_key, temp_file_path):
             print("Error: Failed to download document from S3")
+            sentry_sdk.capture_message(
+                "Failed to download document from S3",
+                level="error",
+                extras={
+                    "component": "rag_ingestion",
+                    "s3_key": s3_key,
+                    "user_id": user_id
+                }
+            )
             return False
         
         print(f"Downloaded document from S3 to {temp_file_path}")
     except Exception as e:
         print(f"Error creating temporary file: {e}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_ingestion",
+            "function": "ingest_document_from_s3",
+            "s3_key": s3_key,
+            "user_id": user_id
+        })
         return False
 
     # 3. Read and chunk the document using page-aware approach
@@ -640,6 +657,13 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
             
     except Exception as e:
         print(f"Error reading or chunking document: {e}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_ingestion",
+            "function": "ingest_document_from_s3",
+            "stage": "document_reading_chunking",
+            "s3_key": s3_key,
+            "user_id": user_id
+        })
         return False
     finally:
         # Clean up temporary file
@@ -653,6 +677,13 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
         print("Initialized embedding client and Pinecone index.")
     except Exception as e:
         print(f"Error initializing embedding client or Pinecone: {e}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_ingestion",
+            "function": "ingest_document_from_s3",
+            "stage": "initialization",
+            "s3_key": s3_key,
+            "user_id": user_id
+        })
         return False
 
     # 5. Embed chunks
@@ -662,6 +693,14 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
         print("Embedding complete.")
     except Exception as e:
         print(f"Error encoding chunks: {e}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_ingestion",
+            "function": "ingest_document_from_s3",
+            "stage": "embedding",
+            "s3_key": s3_key,
+            "user_id": user_id,
+            "chunks_count": len(chunks)
+        })
         return False
 
     # 6. Prepare vectors for upsert with page metadata
@@ -692,8 +731,16 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
         return True
     except Exception as e:
         print(f"Error upserting to Pinecone: {e}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_ingestion",
+            "function": "ingest_document_from_s3",
+            "stage": "pinecone_upsert",
+            "s3_key": s3_key,
+            "user_id": user_id,
+            "vectors_count": len(vectors)
+        })
         return False
-
+    
 def ingest_document(file_path: str, user_id: str):
     """
     Legacy function for backward compatibility - processes local file directly.

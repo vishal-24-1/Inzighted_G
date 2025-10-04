@@ -6,6 +6,8 @@ import time
 import random
 import concurrent.futures
 import threading
+from .llm_key_manager import LLMKeyManager
+import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
@@ -24,20 +26,29 @@ class GeminiLLMClient:
     
     def __init__(self):
         self.api_key = None
+        # Key manager supports multiple comma-separated keys in settings.LLM_API_KEY
+        self.key_manager = LLMKeyManager(settings.LLM_API_KEY if getattr(settings, 'LLM_API_KEY', None) else None)
         self._initialize_client()
     
     def _initialize_client(self):
         """Initialize Gemini client with API key from settings"""
         try:
-            if not settings.LLM_API_KEY:
-                logger.error("LLM_API_KEY not found in settings")
+            if not self.key_manager or self.key_manager.total_keys() == 0:
+                logger.error("LLM_API_KEY not found in settings or no keys configured")
+                sentry_sdk.capture_message(
+                    "LLM_API_KEY not configured",
+                    level="error",
+                    extras={"component": "gemini_client"}
+                )
                 return
-                
-            self.api_key = settings.LLM_API_KEY
-            logger.info("Successfully initialized Gemini client with gemini-2.0-flash-exp")
+
+            # Set initial api_key
+            self.api_key = self.key_manager.get_key()
+            logger.info("Successfully initialized Gemini client with gemini-2.0-flash-exp (key rotation enabled)")
             
         except Exception as e:
             logger.error(f"Failed to initialize Gemini client: {e}")
+            sentry_sdk.capture_exception(e)
             self.api_key = None
     
     def generate_response(self, prompt: str, max_tokens: int = 1000) -> str:
@@ -51,73 +62,120 @@ class GeminiLLMClient:
         Returns:
             Generated response text or error message
         """
-        if not self.api_key:
+        if not self.key_manager or self.key_manager.total_keys() == 0:
             return "Error: Gemini client not initialized. Please check your LLM_API_KEY."
         
         try:
             url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
-            headers = {
-                'Content-Type': 'application/json',
-            }
-            
+            headers = {'Content-Type': 'application/json'}
+
             data = {
-                "contents": [{
-                    "parts": [{
-                        "text": prompt
-                    }]
-                }],
+                "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "maxOutputTokens": max_tokens,
                     "temperature": 0.7,
                     "topP": 0.8,
-                    "topK": 40
+                    "topK": 40,
+                },
+            }
+
+            # We'll attempt across available keys until one succeeds or all fail
+            tried_keys = []
+            total_available = self.key_manager.total_keys()
+
+            for key_attempt in range(total_available):
+                current_key = self.key_manager.get_key()
+                if not current_key:
+                    break
+
+                tried_keys.append(current_key)
+                params = {'key': current_key}
+
+                # Try a small retry loop per key for transient errors
+                for attempt in range(2):
+                    try:
+                        response = requests.post(url, headers=headers, json=data, params=params, timeout=30)
+                        response.raise_for_status()
+
+                        result = response.json()
+                        text = self._extract_text_from_response(result)
+                        if text:
+                            # success
+                            return text.strip()
+
+                        logger.error(f"Gemini response could not be parsed into text. Raw response: {json.dumps(result, indent=2)}")
+                        return "Error: Received empty or filtered response from the AI model."
+
+                    except requests.exceptions.HTTPError as e:
+                        status = getattr(e.response, 'status_code', None)
+                        body = getattr(e.response, 'text', '')
+
+                        # Capture HTTP errors in Sentry with context
+                        sentry_sdk.capture_exception(e, extras={
+                            "component": "gemini_client",
+                            "method": "generate_response",
+                            "status_code": status,
+                            "response_body": body[:500],  # First 500 chars
+                            "key_attempt": key_attempt,
+                            "attempt": attempt
+                        })
+
+                        # If key is invalid or quota, blacklist this key and try next
+                        if status in (401, 403, 429):
+                            logger.warning(f"Key error (status {status}) for key {current_key[:8]}..., marking failed. Response: {body}")
+                            # blacklist the key for some time
+                            self.key_manager.mark_key_failed(current_key, cooldown_seconds=60)
+                            break  # break out of retry loop for this key and try next key
+
+                        # transient server errors - maybe retry
+                        if status in (502, 503) and attempt == 0:
+                            wait_time = (2 ** attempt) + random.uniform(0, 1)
+                            logger.warning(f"Gemini API {status} error, retrying in {wait_time:.1f}s (attempt {attempt + 1}/2)")
+                            time.sleep(wait_time)
+                            continue
+
+                        logger.error(f"HTTP error calling Gemini API: {status} - {body}")
+                        return f"Error: API request failed with status {status}"
+
+                    except requests.exceptions.RequestException as e:
+                        # Capture request exceptions
+                        sentry_sdk.capture_exception(e, extras={
+                            "component": "gemini_client",
+                            "method": "generate_response",
+                            "key_attempt": key_attempt,
+                            "attempt": attempt
+                        })
+                        
+                        if attempt == 0:
+                            wait_time = (2 ** attempt) + random.uniform(0, 1)
+                            logger.warning(f"Request error, retrying in {wait_time:.1f}s (attempt {attempt + 1}/2): {e}")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            logger.error(f"Request error calling Gemini API: {e}")
+                            # mark key as possibly bad and try next
+                            self.key_manager.mark_key_failed(current_key, cooldown_seconds=30)
+                            break
+
+            # If we get here, all keys failed
+            logger.error(f"All LLM API keys failed or exhausted. Tried keys: {[k[:8] + '...' for k in tried_keys]}")
+            sentry_sdk.capture_message(
+                "All LLM API keys failed or exhausted",
+                level="error",
+                extras={
+                    "component": "gemini_client",
+                    "method": "generate_response",
+                    "tried_keys_count": len(tried_keys)
                 }
-            }
-            
-            params = {
-                'key': self.api_key
-            }
-            
-            # Make the request with retry logic
-            for attempt in range(3):
-                try:
-                    response = requests.post(url, headers=headers, json=data, params=params, timeout=30)
-                    response.raise_for_status()
-                    
-                    result = response.json()
-                    
-                    # Extract text from response
-                    text = self._extract_text_from_response(result)
-                    if text:
-                        return text.strip()
-                    
-                    # Log the raw response for debugging
-                    logger.error(f"Gemini response could not be parsed into text. Raw response: {json.dumps(result, indent=2)}")
-                    return "Error: Received empty or filtered response from the AI model."
-                    
-                except requests.exceptions.HTTPError as e:
-                    if e.response.status_code == 503 and attempt < 2:
-                        wait_time = (2 ** attempt) + random.uniform(0, 1)
-                        logger.warning(f"Gemini API 503 error, retrying in {wait_time:.1f}s (attempt {attempt + 1}/3)")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        logger.error(f"HTTP error calling Gemini API: {e.response.status_code} - {e.response.text}")
-                        return f"Error: API request failed with status {e.response.status_code}"
-                except requests.exceptions.RequestException as e:
-                    if attempt < 2:
-                        wait_time = (2 ** attempt) + random.uniform(0, 1)
-                        logger.warning(f"Request error, retrying in {wait_time:.1f}s (attempt {attempt + 1}/3): {e}")
-                        time.sleep(wait_time)
-                        continue
-                    else:
-                        logger.error(f"Request error calling Gemini API: {e}")
-                        return f"Error: Request failed - {str(e)}"
-            
-            return "Error: Failed to get response after 3 retries"
+            )
+            return "Error: All configured LLM API keys failed or are exhausted."
                 
         except Exception as e:
             logger.error(f"Error generating response with Gemini: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "gemini_client",
+                "method": "generate_response"
+            })
             return f"Error: Failed to generate response - {str(e)}"
 
     def _extract_text_from_response(self, response_json) -> str | None:
@@ -159,22 +217,36 @@ class GeminiLLMClient:
         Generate embeddings using Gemini Embedding API
         Note: This method is kept for compatibility but uses the EMBEDDING_API_KEY
         """
-        if not settings.EMBEDDING_API_KEY:
-            logger.error("EMBEDDING_API_KEY not found in settings")
-            raise ValueError("EMBEDDING_API_KEY not configured")
-        
-        logger.info(f"Generating embeddings for {len(texts)} text chunks...")
-        
-        # Use direct HTTP requests for embeddings
-        embeddings = self._get_embeddings_with_requests(texts)
-        logger.info(f"✅ Embeddings generated using HTTP requests")
-        
-        # Validate embedding dimensions
-        if embeddings and len(embeddings) > 0:
-            actual_dim = len(embeddings[0])
-            logger.info(f"✅ Embedding validation: {len(embeddings)} vectors of dimension {actual_dim}")
-        
-        return embeddings
+        try:
+            if not settings.EMBEDDING_API_KEY:
+                logger.error("EMBEDDING_API_KEY not found in settings")
+                sentry_sdk.capture_message(
+                    "EMBEDDING_API_KEY not configured",
+                    level="error",
+                    extras={"component": "gemini_client", "method": "get_embeddings"}
+                )
+                raise ValueError("EMBEDDING_API_KEY not configured")
+            
+            logger.info(f"Generating embeddings for {len(texts)} text chunks...")
+            
+            # Use direct HTTP requests for embeddings
+            embeddings = self._get_embeddings_with_requests(texts)
+            logger.info(f"✅ Embeddings generated using HTTP requests")
+            
+            # Validate embedding dimensions
+            if embeddings and len(embeddings) > 0:
+                actual_dim = len(embeddings[0])
+                logger.info(f"✅ Embedding validation: {len(embeddings)} vectors of dimension {actual_dim}")
+            
+            return embeddings
+        except Exception as e:
+            logger.error(f"Error in get_embeddings: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "gemini_client",
+                "method": "get_embeddings",
+                "text_count": len(texts) if texts else 0
+            })
+            raise
     
     def _get_embeddings_with_requests(self, texts: list[str]) -> list[list[float]]:
         """
@@ -278,7 +350,19 @@ class GeminiLLMClient:
         
         # Check for failures
         if failed_indices:
-            raise ValueError(f"Failed to get embeddings for {len(failed_indices)} texts at indices: {failed_indices}")
+            error_msg = f"Failed to get embeddings for {len(failed_indices)} texts at indices: {failed_indices}"
+            logger.error(error_msg)
+            sentry_sdk.capture_message(
+                error_msg,
+                level="error",
+                extras={
+                    "component": "gemini_client",
+                    "method": "_get_embeddings_with_requests",
+                    "failed_count": len(failed_indices),
+                    "total_count": len(texts)
+                }
+            )
+            raise ValueError(error_msg)
         
         # Validate all embeddings were collected
         if None in embeddings:
@@ -330,18 +414,43 @@ class GeminiLLMClient:
                         "parts": [{"text": text}]
                     }]
                 }
-                params = {'key': self.api_key}
-                
-                response = requests.post(url, headers=headers, json=data, params=params, timeout=10)
-                response.raise_for_status()
-                
-                result = response.json()
-                # Extract token count and create a dummy token list
-                token_count = result.get('totalTokens', 0)
-                
-                # Since we don't get actual token IDs, create a dummy list
-                # This is sufficient for chunking which only needs token counts
-                token_lists.append(list(range(token_count)))
+                # Try across available keys
+                params_key = None
+                for _ in range(self.key_manager.total_keys()):
+                    candidate_key = self.key_manager.get_key()
+                    if not candidate_key:
+                        break
+                    params = {'key': candidate_key}
+                    try:
+                        response = requests.post(url, headers=headers, json=data, params=params, timeout=10)
+                        response.raise_for_status()
+
+                        result = response.json()
+                        token_count = result.get('totalTokens', 0)
+                        token_lists.append(list(range(token_count)))
+                        break
+
+                    except requests.exceptions.HTTPError as e:
+                        status = getattr(e.response, 'status_code', None)
+                        if status in (401, 403, 429):
+                            # mark key failed and try next
+                            self.key_manager.mark_key_failed(candidate_key, cooldown_seconds=30)
+                            continue
+                        else:
+                            raise
+                    except requests.exceptions.RequestException:
+                        # try next key
+                        self.key_manager.mark_key_failed(candidate_key, cooldown_seconds=10)
+                        continue
+
+                else:
+                    # No key succeeded for this text - fall back to tiktoken or whitespace
+                    logger.error("Gemini tokenization: no LLM keys succeeded for tokenization request, falling back")
+                    if HAS_TIKTOKEN:
+                        enc = tiktoken.get_encoding("cl100k_base")
+                        token_lists.append(enc.encode(text))
+                    else:
+                        token_lists.append(text.split())
                 
             except Exception as e:
                 logger.error(f"Gemini tokenization failed for text: {e}")

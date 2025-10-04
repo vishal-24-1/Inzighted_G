@@ -11,9 +11,34 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Initialize Sentry for error tracking and monitoring
+import sentry_sdk
+from sentry_sdk.integrations.django import DjangoIntegration
+
+SENTRY_DSN = os.environ.get("SENTRY_DSN")
+SENTRY_ENVIRONMENT = os.environ.get("SENTRY_ENVIRONMENT", os.environ.get("ENV", "development"))
+SENTRY_TRACES_SAMPLE_RATE = float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1"))
+
+if SENTRY_DSN:
+    sentry_sdk.init(
+        dsn=SENTRY_DSN,
+        integrations=[DjangoIntegration()],
+        environment=SENTRY_ENVIRONMENT,
+        traces_sample_rate=SENTRY_TRACES_SAMPLE_RATE,
+        send_default_pii=False,  # Don't send personally identifiable information
+        # Enable automatic exception capture
+        auto_enabling_integrations=True,
+    )
+    print(f"✅ Sentry initialized for environment: {SENTRY_ENVIRONMENT}")
 
 
 # Quick-start development settings - unsuitable for production
@@ -85,7 +110,7 @@ DATABASES = {
         "USER": "inzightedb2c",
         "PASSWORD": "b2c",
         "HOST": "localhost",
-        "PORT":"5432",
+        "PORT":"5433",
     }
 }
 
@@ -133,10 +158,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # RAG Implementation Settings
 # ------------------------------------------------------------------------------
-import os
-from dotenv import load_dotenv
-
-load_dotenv()
 
 # Pinecone settings
 PINECONE_API_KEY = os.environ.get("PINECONE_API_KEY")
@@ -150,6 +171,10 @@ LLM_API_KEY = os.environ.get("LLM_API_KEY")
 
 # Embedding API Key (for Gemini Embedding-001)
 EMBEDDING_API_KEY = os.environ.get("EMBEDDING_API_KEY")
+
+# Google OAuth Configuration
+GOOGLE_OAUTH_CLIENT_ID = os.environ.get("GOOGLE_OAUTH_CLIENT_ID")
+GOOGLE_OAUTH_CLIENT_SECRET = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET")
 
 # Custom User Model
 AUTH_USER_MODEL = 'api.User'

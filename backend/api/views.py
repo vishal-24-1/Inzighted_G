@@ -3,11 +3,13 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
+import sentry_sdk
 from .serializers import (
     RagQuerySerializer, DocumentIngestSerializer, 
     UserRegistrationSerializer, UserLoginSerializer, 
     UserProfileSerializer, DocumentSerializer,
-    ChatSessionSerializer, ChatSessionListSerializer, ChatMessageSerializer
+    ChatSessionSerializer, ChatSessionListSerializer, ChatMessageSerializer,
+    GoogleAuthSerializer
 )
 from .rag_ingestion import ingest_document, ingest_document_from_s3
 from .rag_query import query_rag, generate_tutoring_question
@@ -18,6 +20,8 @@ import os
 import tempfile
 from django.conf import settings
 import time
+from google.oauth2 import id_token
+from google.auth.transport import requests
 
 class RegisterView(APIView):
     """
@@ -73,6 +77,121 @@ class ProfileView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class GoogleAuthView(APIView):
+    """
+    API view to handle Google OAuth authentication.
+    Receives Google credential (ID token), verifies it, and returns JWT tokens.
+    """
+    permission_classes = [AllowAny]
+    
+    def post(self, request):
+        try:
+            # Get the credential from request
+            credential = request.data.get('credential')
+            
+            # Debug logging
+            print(f"Received Google auth request")
+            print(f"Request data keys: {request.data.keys()}")
+            print(f"Credential present: {bool(credential)}")
+            
+            if not credential:
+                print("ERROR: No credential provided")
+                return Response(
+                    {'error': 'No credential provided'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Verify the Google token
+            try:
+                print(f"Verifying token with client ID: {settings.GOOGLE_OAUTH_CLIENT_ID[:20]}...")
+                idinfo = id_token.verify_oauth2_token(
+                    credential, 
+                    requests.Request(), 
+                    settings.GOOGLE_OAUTH_CLIENT_ID
+                )
+                
+                print(f"Token verified successfully")
+                print(f"Token info: {idinfo.keys()}")
+                
+                # Check if token is for our app
+                if idinfo['aud'] != settings.GOOGLE_OAUTH_CLIENT_ID:
+                    print(f"ERROR: Invalid audience. Expected: {settings.GOOGLE_OAUTH_CLIENT_ID}, Got: {idinfo['aud']}")
+                    return Response(
+                        {'error': 'Invalid token audience'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Extract user information
+                email = idinfo.get('email')
+                name = idinfo.get('name', '')
+                google_id = idinfo.get('sub')
+                
+                print(f"User email: {email}, name: {name}")
+                
+                if not email:
+                    print("ERROR: No email in token")
+                    return Response(
+                        {'error': 'Email not provided by Google'}, 
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                
+                # Check if user exists, create if not
+                user, created = User.objects.get_or_create(
+                    email=email,
+                    defaults={
+                        'username': email.split('@')[0],
+                        'name': name,
+                        'google_id': google_id,
+                        'is_active': True,
+                    }
+                )
+                
+                print(f"User {'created' if created else 'found'}: {user.email}")
+                
+                # Update Google ID if user exists but doesn't have it
+                if not created and not user.google_id:
+                    user.google_id = google_id
+                    user.save()
+                    print(f"Updated Google ID for existing user")
+                
+                # Generate JWT tokens
+                refresh = RefreshToken.for_user(user)
+                
+                print(f"JWT tokens generated successfully")
+                
+                return Response({
+                    'user': UserProfileSerializer(user).data,
+                    'refresh': str(refresh),
+                    'access': str(refresh.access_token),
+                    'message': 'Login successful' if not created else 'Account created successfully'
+                })
+                
+            except ValueError as e:
+                # Invalid token
+                print(f"ERROR: Token verification failed: {str(e)}")
+                sentry_sdk.capture_exception(e, extras={
+                    "component": "auth",
+                    "view": "GoogleAuthView",
+                    "error_type": "token_verification_failed"
+                })
+                return Response(
+                    {'error': f'Invalid token: {str(e)}'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            print(f"ERROR: Unexpected error: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            sentry_sdk.capture_exception(e, extras={
+                "component": "auth",
+                "view": "GoogleAuthView"
+            })
+            return Response(
+                {'error': f'Authentication failed: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 class IngestView(APIView):
     """
@@ -135,6 +254,12 @@ class IngestView(APIView):
             except Exception as e:
                 document.status = 'failed'
                 document.save()
+                sentry_sdk.capture_exception(e, extras={
+                    "component": "document_ingestion",
+                    "view": "IngestView",
+                    "user_id": str(request.user.id),
+                    "filename": file_obj.name
+                })
                 return Response({
                     "error": "Document ingestion failed.",
                     "details": str(e)
@@ -244,6 +369,12 @@ class ChatBotView(APIView):
             })
 
         except Exception as e:
+            sentry_sdk.capture_exception(e, extras={
+                "component": "chat",
+                "view": "ChatBotView",
+                "user_id": str(request.user.id) if request.user else None,
+                "session_id": session_id
+            })
             return Response(
                 {"error": f"Failed to generate response: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -371,6 +502,12 @@ class TutoringSessionStartView(APIView):
             }, status=status.HTTP_201_CREATED)
 
         except Exception as e:
+            sentry_sdk.capture_exception(e, extras={
+                "component": "tutoring",
+                "view": "TutoringSessionStartView",
+                "user_id": str(request.user.id) if request.user else None,
+                "document_id": document_id
+            })
             return Response(
                 {"error": f"Failed to start tutoring session: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -488,6 +625,12 @@ class TutoringSessionAnswerView(APIView):
             })
 
         except Exception as e:
+            sentry_sdk.capture_exception(e, extras={
+                "component": "tutoring",
+                "view": "TutoringSessionAnswerView",
+                "user_id": str(request.user.id) if request.user else None,
+                "session_id": session_id
+            })
             return Response(
                 {"error": f"Failed to process answer: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -642,6 +785,12 @@ class SessionInsightsView(APIView):
             })
 
         except Exception as e:
+            sentry_sdk.capture_exception(e, extras={
+                "component": "insights",
+                "view": "SessionInsightsView",
+                "user_id": str(request.user.id) if request.user else None,
+                "session_id": session_id
+            })
             return Response(
                 {"error": f"Failed to retrieve insights: {str(e)}"}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any
 from django.conf import settings
 from .models import ChatSession, SessionInsight, Document
 from .gemini_client import gemini_client
+import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
@@ -80,11 +81,22 @@ class InsightGenerator:
                 insight.status = 'failed'
                 insight.save()
                 logger.error(f"Failed to generate insights for session {session.id}: {str(e)}")
+                sentry_sdk.capture_exception(e, extras={
+                    "component": "insight_generator",
+                    "method": "generate_session_insights",
+                    "session_id": str(session.id),
+                    "qa_pairs_count": len(qa_pairs)
+                })
                 # Re-raise so the outer exception handler can capture and return None
                 raise
                 
         except Exception as e:
             logger.error(f"Error creating insight record for session {session.id}: {str(e)}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "insight_generator",
+                "method": "generate_session_insights",
+                "session_id": str(session.id)
+            })
             return None
     
     def _extract_qa_pairs(self, session: ChatSession) -> list:
@@ -246,6 +258,12 @@ Q&A Pairs:
                 
         except Exception as e:
             logger.error(f"Error generating SWOT analysis: {str(e)}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "insight_generator",
+                "method": "_generate_swot_analysis",
+                "qa_pairs_count": len(qa_pairs),
+                "session_id": str(session.id)
+            })
             return {
                 'strength': 'Unable to analyze strengths at this time.',
                 'weakness': 'Unable to analyze weaknesses at this time.',
@@ -314,4 +332,9 @@ def generate_insights_for_session(session_id: str) -> Optional[SessionInsight]:
         return None
     except Exception as e:
         logger.error(f"Error generating insights for session {session_id}: {str(e)}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "insight_generator",
+            "function": "generate_insights_for_session",
+            "session_id": session_id
+        })
         return None

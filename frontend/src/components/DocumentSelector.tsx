@@ -12,9 +12,10 @@ interface Document {
 interface DocumentSelectorProps {
   onDocumentSelect: (documentId: string | null) => void;
   onCancel: () => void;
+  startingSession?: boolean;
 }
 
-const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, onCancel }) => {
+const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, onCancel, startingSession = false }) => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -81,9 +82,20 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
     );
   }
 
+  // startingSession prop is used to display an overlay while a session is being created
+
   return (
     <div className="document-selector-overlay">
       <div className="document-selector-modal">
+        {/* Overlay shown when parent is starting a session */}
+        {startingSession && (
+          <div className="modal-overlay-loading">
+            <div className="loading-container">
+              <div className="loading-spinner"></div>
+              <p>Starting tutoring session...</p>
+            </div>
+          </div>
+        )}
         <div className="modal-header">
           <h2>Start Tutoring Session</h2>
           <p>Which document would you like to base this session on?</p>

@@ -47,6 +47,18 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = ('id', 'email', 'username', 'name', 'created_at')
         read_only_fields = ('id', 'created_at')
 
+class GoogleAuthSerializer(serializers.Serializer):
+    """
+    Serializer for Google OAuth authentication
+    Accepts the credential (ID token) from Google Sign-In
+    """
+    credential = serializers.CharField(required=True, help_text="Google ID token from OAuth")
+    
+    def validate_credential(self, value):
+        if not value or len(value) < 10:
+            raise serializers.ValidationError("Invalid Google credential token")
+        return value
+
 class RagQuerySerializer(serializers.Serializer):
     query = serializers.CharField()
 

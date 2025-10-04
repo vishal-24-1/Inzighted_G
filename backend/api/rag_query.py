@@ -4,6 +4,7 @@ from .rag_ingestion import initialize_pinecone, get_embedding_client
 from .gemini_client import gemini_client
 from .models import Document, TutoringQuestionBatch, ChatSession
 import json
+import sentry_sdk
 
 def generate_question_batch_for_session(session_id: str, document_id: str = None, total_questions: int = 10) -> TutoringQuestionBatch:
     """
@@ -296,6 +297,13 @@ def generate_question_batch_for_session(session_id: str, document_id: str = None
         
     except Exception as e:
         print(f"Error in generate_question_batch_for_session: {str(e)}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_query",
+            "function": "generate_question_batch_for_session",
+            "session_id": session_id,
+            "document_id": document_id if 'document_id' in locals() else None,
+            "user_id": user_id if 'user_id' in locals() else None
+        })
         # Create a failed batch record for tracking
         try:
             session = ChatSession.objects.get(id=session_id)
@@ -343,6 +351,13 @@ def generate_tutoring_question(user_id: str, document_id: str = None, top_k: int
                 )
             except Exception as e:
                 print(f"Failed to generate question batch: {e}")
+                sentry_sdk.capture_exception(e, extras={
+                    "component": "rag_query",
+                    "function": "generate_tutoring_question",
+                    "session_id": session_id,
+                    "document_id": document_id,
+                    "user_id": user_id
+                })
                 return "I'm having trouble generating questions right now. Please try again later."
         
         # Get the current question from the batch
@@ -375,6 +390,12 @@ def generate_tutoring_question(user_id: str, document_id: str = None, top_k: int
         return _generate_single_question_legacy(user_id, document_id, top_k)
     except Exception as e:
         print(f"Error in generate_tutoring_question: {str(e)}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_query",
+            "function": "generate_tutoring_question",
+            "session_id": session_id,
+            "user_id": user_id
+        })
         return "I'm having trouble generating a question right now. Please try again."
 
 def _generate_single_question_legacy(user_id: str, document_id: str = None, top_k: int = 4) -> str:
@@ -640,4 +661,10 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
         
     except Exception as e:
         print(f"Error calling Gemini LLM: {e}")
+        sentry_sdk.capture_exception(e, extras={
+            "component": "rag_query",
+            "function": "query_rag",
+            "user_id": user_id,
+            "query": query[:100]  # First 100 chars of query
+        })
         return f"Error: Failed to get response from AI model - {str(e)}"

@@ -69,6 +69,9 @@ export const authAPI = {
   register: (email: string, username: string, name: string, password: string, password_confirm: string) =>
     api.post('/auth/register/', { email, username, name, password, password_confirm }),
   
+  googleAuth: (credential: string) =>
+    api.post('/auth/google/', { credential }),
+  
   getProfile: () => api.get('/auth/profile/'),
   
   updateProfile: (data: any) => api.put('/auth/profile/', data),

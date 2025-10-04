@@ -800,6 +800,18 @@
   margin-bottom: 16px;
 }
 
+/* Overlay for modal while starting a session */
+.modal-overlay-loading {
+  position: absolute;
+  inset: 0;
+  background: rgba(255,255,255,0.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+  border-radius: 8px;
+}
+
 .documents-section h3 {
   margin: 0 0 12px 0;
   font-size: 16px;

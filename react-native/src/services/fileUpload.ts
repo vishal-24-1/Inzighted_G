@@ -14,10 +14,16 @@ export const pickAndUploadDocument = async (): Promise<FileUploadResult> => {
     const result = await DocumentPicker.pickSingle({
       type: [DocumentPicker.types.pdf, DocumentPicker.types.docx, DocumentPicker.types.doc],
       copyTo: 'cachesDirectory',
-    });
+    } as any);
 
     if (!result) {
       return { success: false, error: 'No document selected' };
+    }
+
+    const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5 MB
+    // result.size may be undefined on some platforms; if present, validate
+    if (typeof result.size === 'number' && result.size > MAX_FILE_SIZE) {
+      return { success: false, error: 'File size is too high. Please upload a file that is 5 MB or less.' };
     }
 
     // Create FormData
@@ -75,6 +81,11 @@ export const pickAndUploadImage = async (): Promise<FileUploadResult> => {
           }
 
           const asset = response.assets[0];
+          const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+          if (typeof asset.fileSize === 'number' && asset.fileSize > MAX_FILE_SIZE) {
+            resolve({ success: false, error: 'File size is too high. Please upload a file that is 10 MB or less.' });
+            return;
+          }
           
           // Create FormData
           const formData = new FormData();

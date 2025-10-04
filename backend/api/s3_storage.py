@@ -4,6 +4,7 @@ import uuid
 from django.conf import settings
 from botocore.exceptions import NoCredentialsError, ClientError
 import logging
+import sentry_sdk
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,10 @@ class S3DocumentStorage:
             )
         except Exception as e:
             logger.error(f"Failed to initialize S3 client: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "s3_storage",
+                "method": "_initialize_client"
+            })
             self.s3_client = None
     
     def upload_document(self, file_path: str, user_id: str, filename: str) -> str:
@@ -70,12 +75,29 @@ class S3DocumentStorage:
             
         except NoCredentialsError:
             logger.error("AWS credentials not found")
+            sentry_sdk.capture_message(
+                "AWS credentials not found",
+                level="error",
+                extras={"component": "s3_storage", "method": "upload_document"}
+            )
             return None
         except ClientError as e:
             logger.error(f"Failed to upload to S3: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "s3_storage",
+                "method": "upload_document",
+                "user_id": user_id,
+                "filename": filename
+            })
             return None
         except Exception as e:
             logger.error(f"Unexpected error uploading to S3: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "s3_storage",
+                "method": "upload_document",
+                "user_id": user_id,
+                "filename": filename
+            })
             return None
     
     def download_document(self, s3_key: str, local_path: str) -> bool:
@@ -104,9 +126,19 @@ class S3DocumentStorage:
             
         except ClientError as e:
             logger.error(f"Failed to download from S3: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "s3_storage",
+                "method": "download_document",
+                "s3_key": s3_key
+            })
             return False
         except Exception as e:
             logger.error(f"Unexpected error downloading from S3: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "s3_storage",
+                "method": "download_document",
+                "s3_key": s3_key
+            })
             return False
     
     def delete_document(self, s3_key: str) -> bool:
@@ -133,9 +165,19 @@ class S3DocumentStorage:
             
         except ClientError as e:
             logger.error(f"Failed to delete from S3: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "s3_storage",
+                "method": "delete_document",
+                "s3_key": s3_key
+            })
             return False
         except Exception as e:
             logger.error(f"Unexpected error deleting from S3: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "s3_storage",
+                "method": "delete_document",
+                "s3_key": s3_key
+            })
             return False
 
 # Module-level instance
