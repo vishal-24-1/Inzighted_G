@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { documentsAPI } from '../utils/api';
-import './DocumentSelector.css';
 
 interface Document {
   id: string;

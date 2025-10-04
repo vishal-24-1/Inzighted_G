@@ -1,6 +1,12 @@
 const { GenerateSW } = require('workbox-webpack-plugin');
 
 module.exports = {
+  style: {
+    // This setting tells CRACO to read the postcss.config.js file
+    postcss: {
+      mode: 'file',
+    },
+  },
   webpack: {
     plugins: {
       add: [

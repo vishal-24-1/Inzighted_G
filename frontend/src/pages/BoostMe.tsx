@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { insightsAPI } from '../utils/api';
-import './BoostMe.css';
+import { Menu, Home as HomeIcon } from 'lucide-react';
+import Sidebar from '../components/Sidebar';
 
 interface Session {
   id: string;
@@ -39,6 +40,7 @@ const BoostMe: React.FC = () => {
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [touchStart, setTouchStart] = useState<number | null>(null);
   const [touchEnd, setTouchEnd] = useState<number | null>(null);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   useEffect(() => {
     loadSessions();
@@ -190,132 +192,135 @@ const BoostMe: React.FC = () => {
   ] : [];
 
   return (
-    <div className="boost-container">
-      <header className="boost-header">
-        <div className="header-content">
-          <div className="header-left">
-            <div className="back-button" onClick={handleGoHome} title="Go to Home">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M19 12H5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-                <path d="M12 19L5 12L12 5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
-              </svg>
-            </div>
-            <h1>Performance Insights</h1>
-          </div>
-          <div className="user-info">
-            <span>Welcome, {user?.name}</span>
-          </div>
-        </div>
+    <div className="min-h-screen bg-white text-gray-900 p-4">
+      <header className="flex items-center justify-between mb-4">
+        <button
+          className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={sidebarOpen}
+          onClick={() => setSidebarOpen(true)}
+        >
+          <Menu size={18} />
+        </button>
+
+        <div className="flex-1" />
+        <button
+          className="inline-flex items-center gap-2 px-3 py-2 bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          aria-label="Home"
+          onClick={() => navigate('/')}
+        >
+          <HomeIcon size={16} className="text-blue-600" />
+          <span className="text-sm font-medium">Home</span>
+        </button>
       </header>
 
-      <main className="boost-main">
+      {/* Sidebar and backdrop */}
+      {sidebarOpen && (
+        <div className="fixed inset-0 bg-black/40 z-30" onClick={() => setSidebarOpen(false)} />
+      )}
+      <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} onProfileClick={() => {}} />
+
+      <main className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Session Selection */}
-        <div className="session-selection">
-          <h2>Select a Session</h2>
-          <div className="sessions-list">
+        <div className="md:col-span-1">
+          <h2 className="text-sm font-medium mb-2">Select a Session</h2>
+          <div className="space-y-2">
             {sessions.map((session) => (
-              <div
+              <button
                 key={session.id}
-                className={`session-card ${selectedSession?.id === session.id ? 'selected' : ''}`}
                 onClick={() => handleSessionSelect(session)}
+                className={`w-full text-left p-3 rounded-lg border ${selectedSession?.id === session.id ? 'border-blue-500 bg-blue-50' : 'border-gray-100 bg-white'} hover:shadow-sm flex items-center justify-between`}
               >
-                <div className="session-info">
-                  <h3>{session.document_name}</h3>
-                  <p className="session-date">{formatDate(session.updated_at)}</p>
-                  <p className="session-stats">{session.message_count} messages</p>
+                <div>
+                  <div className="text-sm font-medium text-gray-900">{session.document_name}</div>
+                  <div className="text-xs text-gray-500">{formatDate(session.updated_at)} · {session.message_count} messages</div>
                 </div>
                 {selectedSession?.id === session.id && (
-                  <div className="selected-indicator">✓</div>
+                  <div className="text-blue-600 font-bold">✓</div>
                 )}
-              </div>
+              </button>
             ))}
+            {sessions.length === 0 && (
+              <div className="text-sm text-gray-500">No sessions found.</div>
+            )}
           </div>
         </div>
 
-        {/* Document Name Display */}
-        {selectedSession && (
-          <div className="selected-document">
-            {/* Prefer the selected session's document name so header updates immediately on selection */}
-            <h2>Insights for: {selectedSession.document_name || insights?.document_name}</h2>
-            {insights && (
-              <p className="qa-count">{insights.total_qa_pairs} Q&A pairs analyzed</p>
-            )}
-          </div>
-        )}
+        {/* Main insights area */}
+        <div className="md:col-span-2">
+          {selectedSession && (
+            <div className="mb-3">
+              <h2 className="text-base font-semibold">Insights for: {selectedSession.document_name || insights?.document_name}</h2>
+              {insights && <p className="text-xs text-gray-500">{insights.total_qa_pairs} Q&A pairs analyzed</p>}
+            </div>
+          )}
 
-        {/* SWOT Cards */}
-        {loading ? (
-          <div className="loading-insights">
-            <div className="loading-spinner"></div>
-            <p>Analyzing your performance...</p>
-          </div>
-        ) : insights ? (
-          <div className="swot-container">
-            <div className="swot-cards-wrapper">
-              <div 
-                className="swot-cards"
-                style={{ transform: `translateX(-${currentCardIndex * 25}%)` }}
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-              >
-                {swotCards.map((card, index) => (
-                  <div
+          {/* Loading */}
+          {loading ? (
+            <div className="flex flex-col items-center justify-center py-10">
+              <div className="h-10 w-10 border-4 border-blue-100 border-t-blue-600 rounded-full animate-spin" />
+              <p className="text-sm text-gray-600 mt-3">Analyzing your performance...</p>
+            </div>
+          ) : insights ? (
+            <div>
+              <div className="overflow-hidden">
+                <div
+                  className="flex w-[400%] transition-transform duration-300"
+                  style={{ transform: `translateX(-${currentCardIndex * 25}%)` }}
+                  onTouchStart={onTouchStart}
+                  onTouchMove={onTouchMove}
+                  onTouchEnd={onTouchEnd}
+                >
+                  {swotCards.map((card, index) => (
+                    <div key={index} className="w-1/4 p-4">
+                      <div className="bg-white rounded-lg p-4 h-full shadow-sm" style={{ borderLeft: `6px solid ${card.color}`, boxShadow: `0 8px 24px ${card.color}22` }}>
+                        <div className="flex items-center gap-3 mb-3">
+                          <div className="text-2xl">{card.icon}</div>
+                          <h3 className="text-lg font-semibold" style={{ color: card.color }}>{card.type}</h3>
+                        </div>
+                        <div className="text-sm text-gray-700">
+                          {Array.isArray(card.content) ? (
+                            <ul className="list-disc pl-5 space-y-1">
+                              {card.content.map((item, idx) => (
+                                <li key={idx}>{item}</li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p>{card.content}</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Card Indicators */}
+              <div className="flex items-center gap-2 mt-4">
+                {swotCards.map((_, index) => (
+                  <button
                     key={index}
-                    className="swot-card"
-                    style={{ 
-                      borderLeftColor: card.color,
-                      boxShadow: `0 4px 15px ${card.color}20`
-                    }}
-                  >
-                    <div className="card-header">
-                      <span className="card-icon">{card.icon}</span>
-                      <h3 style={{ color: card.color }}>{card.type}</h3>
-                    </div>
-                    <div className="card-content">
-                      {Array.isArray(card.content) ? (
-                        <ul className="swot-list">
-                          {card.content.map((item, idx) => (
-                            <li key={idx}>{item}</li>
-                          ))}
-                        </ul>
-                      ) : (
-                        <p>{card.content}</p>
-                      )}
-                    </div>
-                  </div>
+                    onClick={() => setCurrentCardIndex(index)}
+                    className={`h-2.5 w-8 rounded-full ${currentCardIndex === index ? 'bg-blue-600' : 'bg-gray-200'}`}
+                    aria-label={`View ${swotCards[index].type} card`}
+                  />
                 ))}
               </div>
-            </div>
-            
-            {/* Card Indicators */}
-            <div className="card-indicators">
-              {swotCards.map((_, index) => (
-                <button
-                  key={index}
-                  className={`indicator ${currentCardIndex === index ? 'active' : ''}`}
-                  onClick={() => setCurrentCardIndex(index)}
-                  aria-label={`View ${swotCards[index].type} card`}
-                />
-              ))}
-            </div>
 
-            {/* Swipe Instruction */}
-            <div className="swipe-instruction">
-              <p>← Swipe to explore insights →</p>
+              <div className="text-xs text-gray-500 mt-3">← Swipe to explore insights →</div>
             </div>
-          </div>
-        ) : selectedSession ? (
-          <div className="no-insights">
-            <h3>No insights available</h3>
-            <p>This session doesn't have enough data for analysis.</p>
-          </div>
-        ) : (
-          <div className="no-sessions">
-            <h3>No sessions found</h3>
-            <p>Complete some tutoring sessions to see your performance insights.</p>
-          </div>
-        )}
+          ) : selectedSession ? (
+            <div className="text-center py-8">
+              <h3 className="text-sm font-medium">No insights available</h3>
+              <p className="text-xs text-gray-500">This session doesn't have enough data for analysis.</p>
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <h3 className="text-sm font-medium">No sessions found</h3>
+              <p className="text-xs text-gray-500">Complete some tutoring sessions to see your performance insights.</p>
+            </div>
+          )}
+        </div>
       </main>
     </div>
   );

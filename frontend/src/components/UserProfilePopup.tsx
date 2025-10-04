@@ -1,6 +1,5 @@
 import React from 'react';
 import { useAuth } from '../utils/AuthContext';
-import './UserProfilePopup.css';
 
 interface UserProfilePopupProps {
   onClose: () => void;
