@@ -79,7 +79,9 @@ export const authAPI = {
 
 export const documentsAPI = {
   list: () => api.get('/documents/'),
-  
+  // Get document processing status
+  status: (documentId: string) => api.get(`/documents/${documentId}/status/`),
+
   upload: (file: File) => {
     const formData = new FormData();
     formData.append('file', file);

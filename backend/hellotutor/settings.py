@@ -197,6 +197,36 @@ GOOGLE_REGION = os.environ.get("GOOGLE_REGION", "us-central1")
 # Environment
 ENV = os.environ.get("ENV", "development")
 
+# Celery Configuration
+# ------------------------------------------------------------------------------
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/1")
+
+# Celery Task Settings
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TIMEZONE = 'UTC'
+CELERY_ENABLE_UTC = True
+
+# Celery Worker Settings
+CELERY_WORKER_CONCURRENCY = int(os.environ.get("CELERY_WORKER_CONCURRENCY", "4"))
+CELERY_WORKER_PREFETCH_MULTIPLIER = 4
+CELERY_WORKER_MAX_TASKS_PER_CHILD = 1000
+
+# Celery Task Execution Settings
+CELERY_TASK_ACKS_LATE = True
+CELERY_TASK_REJECT_ON_WORKER_LOST = True
+CELERY_TASK_TRACK_STARTED = True
+
+# Celery Result Backend Settings
+CELERY_RESULT_EXTENDED = True
+CELERY_RESULT_EXPIRES = 3600  # 1 hour
+
+# Celery Task Time Limits
+CELERY_TASK_SOFT_TIME_LIMIT = 1800  # 30 minutes
+CELERY_TASK_TIME_LIMIT = 2400  # 40 minutes
+
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

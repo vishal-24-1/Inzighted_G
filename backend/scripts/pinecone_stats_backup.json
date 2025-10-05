@@ -1,31 +1,16 @@
 {
   "namespaces": {
     "e1daef0798fbaac171a7d90d27dde43c481041855d53319dc10813c64d85c26a": {
-      "vector_count": 5
-    },
-    "1d266d0ea2787875845300d3b2f1b3cd4699d8233969d1375a4a34eef0397b22": {
-      "vector_count": 40
-    },
-    "5b20c045b804c192cb4920d82e4536d9967a769ad0f0d4ad0353be0a9a721cff": {
-      "vector_count": 31
+      "vector_count": 9
     },
     "29e40dc81702bc2da9d7ba2060d9007bf22ee6af1545d5e4bb692e6613a0f28f": {
-      "vector_count": 4
+      "vector_count": 34
     },
-    "b8f91b96d56dd1553ae28ae33beb4c2ac253fad877622008fe03c1c22388333e": {
-      "vector_count": 1
+    "00e7e7fd43e9f861188bdebbe085192feb64d26bd1f4e92c7d21a6f97c73ec2b": {
+      "vector_count": 37
     },
-    "e891e47b662ddd0cf22679880a46ed92ff609843f6b2d3dc2735f14adc3cc88a": {
-      "vector_count": 74
-    },
-    "c6b583c3de0fc8e82703e0617fd900c3cc03bf86902f95fcece14858dbc98efe": {
-      "vector_count": 20
-    },
-    "1938a83bf33a8573e1f07c9dd9d2b3f404284aba29358f291f90d9d3400a25d3": {
-      "vector_count": 2
-    },
-    "c1b1508dde907dfc9a9af6e78e4162f3fb36a5abfc927a73bfb5a172eb3fcaa7": {
-      "vector_count": 1
+    "82e98f702fb861589f8dd6a2984664ac1c464dcc06cb072e59195b12ad13acb5": {
+      "vector_count": 24
     }
   }
 }

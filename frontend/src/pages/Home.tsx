@@ -85,18 +85,68 @@ const Home: React.FC = () => {
       // Reset file input
       event.target.value = '';
 
-      // Store the document ID and show tutoring popup
+      // Store the document ID and poll backend for processing completion
       const documentId = response?.data?.document?.id;
       if (documentId) {
         setLastUploadedDocumentId(documentId);
-        setShowTutoringPopup(true);
+
+        // Poll document status until 'completed' or timeout
+        const maxWaitMs = 2 * 60 * 1000; // 2 minutes
+        const start = Date.now();
+        let attempt = 0;
+
+        const poll = async (): Promise<void> => {
+          attempt += 1;
+          try {
+            const statusRes = await documentsAPI.status(documentId);
+            const status = statusRes?.data?.status;
+
+            if (status === 'completed') {
+              setShowTutoringPopup(true);
+              setUploading(false);
+              return;
+            }
+
+            if (status === 'failed') {
+              alert('Document processing failed on the server. Please try uploading again.');
+              setUploading(false);
+              return;
+            }
+
+            // Not completed yet - check timeout
+            if (Date.now() - start >= maxWaitMs) {
+              // Timeout - show a gentle message and provide option to open document selector
+              setShowDocumentSelector(true);
+              setUploading(false);
+              return;
+            }
+
+            // Exponential backoff: base 1s, cap 8s
+            const delay = Math.min(1000 * Math.pow(2, attempt - 1), 8000);
+            setTimeout(poll, delay + Math.floor(Math.random() * 500));
+
+          } catch (err) {
+            console.error('Error polling document status:', err);
+            // On error, if still within timeout, retry after short delay
+            if (Date.now() - start < maxWaitMs) {
+              setTimeout(poll, 2000);
+            } else {
+              setShowDocumentSelector(true);
+              setUploading(false);
+            }
+          }
+        };
+
+        // Start polling
+        poll();
+
       } else {
         alert('Upload succeeded but no document id returned');
+        setUploading(false);
       }
 
     } catch (error: any) {
       alert('Upload failed: ' + (error?.response?.data?.error || error?.message || 'Unknown error'));
-    } finally {
       setUploading(false);
     }
   };

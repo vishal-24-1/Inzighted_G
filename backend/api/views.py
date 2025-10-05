@@ -16,6 +16,7 @@ from .rag_query import query_rag, generate_tutoring_question
 from .models import User, Document, ChatSession, ChatMessage, SessionInsight, TutoringQuestionBatch
 from .s3_storage import s3_storage
 from .gemini_client import gemini_client
+from .tasks import process_document
 import os
 import tempfile
 from django.conf import settings
@@ -195,7 +196,15 @@ class GoogleAuthView(APIView):
 
 class IngestView(APIView):
     """
-    API view to handle document ingestion.
+    API view to handle document ingestion with asynchronous processing using Celery.
+    
+    Flow:
+    1. User uploads document
+    2. Save to temporary file
+    3. Upload to S3
+    4. Enqueue Celery task for processing
+    5. Return immediate success response
+    6. Background worker processes: extract → chunk → embed → Pinecone
     """
     permission_classes = [IsAuthenticated]
     serializer_class = DocumentIngestSerializer
@@ -206,12 +215,12 @@ class IngestView(APIView):
             file_obj = serializer.validated_data['file']
             user_id = str(request.user.id)  # Get user_id from authenticated user
 
-            # Create document record
+            # Create document record with 'uploading' status
             document = Document.objects.create(
                 user=request.user,
                 filename=file_obj.name,
                 file_size=file_obj.size,
-                status='processing'
+                status='uploading'
             )
 
             # Save file to temporary location first
@@ -224,32 +233,110 @@ class IngestView(APIView):
 
                 # Upload to S3
                 s3_key = s3_storage.upload_document(temp_file_path, user_id, file_obj.name)
+                
                 if not s3_key:
-                    # If S3 upload fails, fall back to local processing
-                    print("S3 upload failed, falling back to local processing")
-                    ingest_document(temp_file_path, user_id)
-                else:
-                    # Update document with S3 key and process from S3
-                    document.s3_key = s3_key
+                    # If S3 upload fails, fall back to synchronous local processing
+                    print("S3 upload failed, falling back to synchronous local processing")
+                    document.status = 'processing'
                     document.save()
                     
-                    # Process document from S3
-                    success = ingest_document_from_s3(s3_key, user_id)
-                    if not success:
+                    try:
+                        ingest_document(temp_file_path, user_id)
+                        document.status = 'completed'
+                        document.save()
+                        
+                        return Response({
+                            "message": "Document uploaded and processed successfully (local fallback).",
+                            "document": DocumentSerializer(document).data,
+                            "async": False
+                        }, status=status.HTTP_201_CREATED)
+                        
+                    except Exception as proc_error:
                         document.status = 'failed'
                         document.save()
+                        sentry_sdk.capture_exception(proc_error, extras={
+                            "component": "document_ingestion",
+                            "view": "IngestView",
+                            "mode": "local_fallback",
+                            "user_id": user_id,
+                            "filename": file_obj.name
+                        })
                         return Response({
-                            "error": "Document ingestion failed.",
-                            "details": "Failed to process document from S3"
+                            "error": "Document processing failed.",
+                            "details": str(proc_error)
                         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-                document.status = 'completed'
+                
+                # S3 upload successful - Update document with S3 key
+                document.s3_key = s3_key
+                document.status = 'processing'
                 document.save()
                 
-                return Response({
-                    "message": "Document ingestion completed successfully.",
-                    "document": DocumentSerializer(document).data
-                }, status=status.HTTP_201_CREATED)
+                # Enqueue Celery task for asynchronous processing
+                try:
+                    task = process_document.delay(
+                        s3_key=s3_key,
+                        user_id=user_id,
+                        document_id=str(document.id)
+                    )
+                    
+                    print(f"✅ Celery task enqueued: {task.id} for document {document.id}")
+                    
+                    # Return immediate success response
+                    return Response({
+                        "message": "Document uploaded successfully. Processing started in background.",
+                        "document": DocumentSerializer(document).data,
+                        "task_id": task.id,
+                        "async": True,
+                        "status": "processing"
+                    }, status=status.HTTP_202_ACCEPTED)
+                    
+                except Exception as celery_error:
+                    # If Celery is not available, fall back to synchronous processing
+                    print(f"⚠️  Celery not available: {celery_error}. Falling back to synchronous processing.")
+                    sentry_sdk.capture_message(
+                        "Celery unavailable, using synchronous processing",
+                        level="warning",
+                        extras={
+                            "error": str(celery_error),
+                            "document_id": str(document.id),
+                            "user_id": user_id
+                        }
+                    )
+                    
+                    # Process synchronously as fallback
+                    try:
+                        success = ingest_document_from_s3(s3_key, user_id)
+                        if not success:
+                            document.status = 'failed'
+                            document.save()
+                            return Response({
+                                "error": "Document ingestion failed.",
+                                "details": "Failed to process document from S3"
+                            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+                        
+                        document.status = 'completed'
+                        document.save()
+                        
+                        return Response({
+                            "message": "Document uploaded and processed successfully (synchronous fallback).",
+                            "document": DocumentSerializer(document).data,
+                            "async": False
+                        }, status=status.HTTP_201_CREATED)
+                        
+                    except Exception as sync_error:
+                        document.status = 'failed'
+                        document.save()
+                        sentry_sdk.capture_exception(sync_error, extras={
+                            "component": "document_ingestion",
+                            "view": "IngestView",
+                            "mode": "sync_fallback",
+                            "user_id": user_id,
+                            "filename": file_obj.name
+                        })
+                        return Response({
+                            "error": "Document processing failed.",
+                            "details": str(sync_error)
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
                 
             except Exception as e:
                 document.status = 'failed'
@@ -261,7 +348,7 @@ class IngestView(APIView):
                     "filename": file_obj.name
                 })
                 return Response({
-                    "error": "Document ingestion failed.",
+                    "error": "Document upload failed.",
                     "details": str(e)
                 }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
             finally:
@@ -299,6 +386,50 @@ class DocumentListView(APIView):
         documents = Document.objects.filter(user=request.user).order_by('-upload_date')
         serializer = DocumentSerializer(documents, many=True)
         return Response(serializer.data)
+
+
+class DocumentStatusView(APIView):
+    """
+    API view to check the processing status of a specific document.
+    Returns current status and task information if available.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, document_id):
+        try:
+            document = Document.objects.get(id=document_id, user=request.user)
+            
+            response_data = {
+                'document_id': str(document.id),
+                'filename': document.filename,
+                'status': document.status,
+                'upload_date': document.upload_date.isoformat(),
+                'file_size': document.file_size,
+            }
+            
+            # Add status-specific messages
+            status_messages = {
+                'uploading': 'Document is being uploaded to storage...',
+                'processing': 'Document is being processed (extraction, chunking, embedding)...',
+                'completed': 'Document processing completed successfully. Ready for use.',
+                'failed': 'Document processing failed. Please try uploading again.',
+            }
+            
+            response_data['message'] = status_messages.get(document.status, 'Unknown status')
+            
+            # Calculate processing time if completed
+            if document.status == 'completed' and document.upload_date:
+                # Approximate - actual processing time would need task tracking
+                response_data['note'] = 'Document is ready for tutoring sessions'
+            
+            return Response(response_data)
+            
+        except Document.DoesNotExist:
+            return Response(
+                {'error': 'Document not found or you do not have access to it'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
 
 class ChatBotView(APIView):
     """

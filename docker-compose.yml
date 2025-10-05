@@ -1,0 +1,160 @@
+version: '3.8'
+
+services:
+  # Redis - Message broker and result backend for Celery
+  redis:
+    image: redis:7-alpine
+    container_name: inzighted_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    restart: unless-stopped
+    networks:
+      - inzighted_network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # PostgreSQL Database (if needed)
+  # db:
+  #   image: postgres:15-alpine
+  #   container_name: inzighted_db
+  #   environment:
+  #     POSTGRES_DB: inzightedg
+  #     POSTGRES_USER: inzightedb2c
+  #     POSTGRES_PASSWORD: b2c
+  #   ports:
+  #     - "5433:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   networks:
+  #     - inzighted_network
+
+  # Celery Worker 1
+  celery_worker_1:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: inzighted_celery_worker_1
+    command: celery -A hellotutor worker --loglevel=info --concurrency=4 -n worker1@%h
+    volumes:
+      - ./backend:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_WORKER_CONCURRENCY=4
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - inzighted_network
+
+  # Celery Worker 2
+  celery_worker_2:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: inzighted_celery_worker_2
+    command: celery -A hellotutor worker --loglevel=info --concurrency=4 -n worker2@%h
+    volumes:
+      - ./backend:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_WORKER_CONCURRENCY=4
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - inzighted_network
+
+  # Celery Worker 3
+  celery_worker_3:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: inzighted_celery_worker_3
+    command: celery -A hellotutor worker --loglevel=info --concurrency=4 -n worker3@%h
+    volumes:
+      - ./backend:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_WORKER_CONCURRENCY=4
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - inzighted_network
+
+  # Celery Worker 4
+  celery_worker_4:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: inzighted_celery_worker_4
+    command: celery -A hellotutor worker --loglevel=info --concurrency=4 -n worker4@%h
+    volumes:
+      - ./backend:/app
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/1
+      - CELERY_WORKER_CONCURRENCY=4
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - inzighted_network
+
+  # Celery Beat (for scheduled tasks - optional)
+  # celery_beat:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: inzighted_celery_beat
+  #   command: celery -A hellotutor beat --loglevel=info
+  #   volumes:
+  #     - ./backend:/app
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/1
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   restart: unless-stopped
+  #   networks:
+  #     - inzighted_network
+
+  # Flower - Celery monitoring tool (optional)
+  # flower:
+  #   build:
+  #     context: ./backend
+  #     dockerfile: Dockerfile
+  #   container_name: inzighted_flower
+  #   command: celery -A hellotutor flower --port=5555
+  #   ports:
+  #     - "5555:5555"
+  #   environment:
+  #     - CELERY_BROKER_URL=redis://redis:6379/0
+  #     - CELERY_RESULT_BACKEND=redis://redis:6379/1
+  #   depends_on:
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     - inzighted_network
+
+volumes:
+  redis_data:
+  # postgres_data:
+
+networks:
+  inzighted_network:
+    driver: bridge

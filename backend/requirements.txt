@@ -11,6 +11,10 @@ python-dotenv
 requests
 google-auth>=2.23.0
 
+# Celery and Redis for async task processing
+celery[redis]>=5.3.0
+redis>=4.5.0
+
 # ML & utility packages
 numpy
 tqdm
