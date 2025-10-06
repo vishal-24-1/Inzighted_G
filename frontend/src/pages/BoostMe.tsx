@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { insightsAPI } from '../utils/api';
-import { Menu, Home as HomeIcon, ShieldCheck, AlertTriangle, TrendingUp, Zap } from 'lucide-react';
+import { Menu, SquarePen as HomeIcon, ShieldCheck, AlertTriangle, TrendingUp, Zap } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
+import UserProfilePopup from '../components/UserProfilePopup';
 
 interface Session {
   id: string;
@@ -41,6 +42,7 @@ const BoostMe: React.FC = () => {
   const [touchStart, setTouchStart] = useState<number | null>(null);
   const [touchEnd, setTouchEnd] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [showProfilePopup, setShowProfilePopup] = useState(false);
 
   useEffect(() => {
     // If URL has a session query param, we'll auto-select that session after loading
@@ -210,10 +212,10 @@ const BoostMe: React.FC = () => {
   const cardCount = Math.max(swotCards.length, 1);
 
   return (
-    <div className="min-h-screen bg-white text-gray-900 p-4 flex flex-col items-center">
-      <header className="w-full max-w-md flex items-center justify-between mb-4">
+    <div className="w-full min-h-screen bg-white text-gray-900 p-4 pb-24 flex flex-col overflow-x-hidden">
+      <header className="w-full max-w-md flex items-center justify-between mb-4 md:ml-64 md:max-w-none md:border-b md:border-gray-200 md:pb-3">
         <button
-          className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          className="md:hidden w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
           aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={sidebarOpen}
           onClick={() => setSidebarOpen(true)}
@@ -221,19 +223,19 @@ const BoostMe: React.FC = () => {
           <Menu size={18} />
         </button>
 
-        <div className="text-center flex-1">
-          {/** Show truncated session/document name on mobile header */}
+        <div className="flex-1 text-center md:ml-8 md:text-left">
+          {/** Show truncated session/document name in header */}
           {(() => {
             const raw = selectedSession?.document_name || insights?.document_name || selectedSession?.title || 'Boost Me';
             const max = 30;
             const txt = String(raw);
             const truncated = txt.length > max ? txt.slice(0, max - 3) + '...' : txt;
-            return <h1 className="text-sm font-semibold">{truncated}</h1>;
+            return <h1 className="text-sm md:text-lg font-semibold">{truncated}</h1>;
           })()}
         </div>
 
         <button
-          className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 md:hidden"
           aria-label="Home"
           onClick={() => navigate('/')}
         >
@@ -248,7 +250,7 @@ const BoostMe: React.FC = () => {
       <Sidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
-        onProfileClick={() => { }}
+        onProfileClick={() => setShowProfilePopup(true)}
         sessions={sessions.map(s => ({ id: s.id, document_name: s.document_name, updated_at: s.updated_at, message_count: s.message_count }))}
         selectedSessionId={selectedSession?.id ?? null}
         onSessionSelect={(sessionId: string) => {
@@ -258,7 +260,30 @@ const BoostMe: React.FC = () => {
         }}
       />
 
-      <main className="w-full max-w-md px-3">
+      {/* Static desktop sidebar (visible on md+) */}
+      <div className="hidden md:block md:flex-shrink-0">
+        <Sidebar
+          isOpen={true}
+          inlineOnDesktop={true}
+          onClose={() => { }}
+          onProfileClick={() => setShowProfilePopup(true)}
+          sessions={sessions.map(s => ({ id: s.id, document_name: s.document_name, updated_at: s.updated_at, message_count: s.message_count }))}
+          selectedSessionId={selectedSession?.id ?? null}
+          onSessionSelect={(sessionId: string) => {
+            const session = sessions.find(s => s.id === sessionId);
+            if (session) handleSessionSelect(session);
+          }}
+        />
+      </div>
+
+      {/* User Profile Popup (ensure it appears above the sidebar/backdrop) */}
+      {showProfilePopup && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center">
+          <UserProfilePopup onClose={() => setShowProfilePopup(false)} />
+        </div>
+      )}
+
+      <main className="w-full max-w-md px-3 md:ml-72 mx-auto md:mx-0">
         {selectedSession && (
           <div className="mt-3 text-left">
             <h2 className="text-base font-semibold">AI Generated Tips</h2>

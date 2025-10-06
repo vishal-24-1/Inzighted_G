@@ -1,41 +1,58 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-    <meta name="theme-color" content="#1976d2" />
-    <meta name="description" content="InzightEd - Your personal AI tutor for interactive learning and document-based tutoring sessions" />
-    <meta name="keywords" content="education, tutoring, AI, learning, study, documents" />
-    <meta name="author" content="InzightEd" />
-    
-    <!-- PWA Meta Tags -->
-    <meta name="mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="InzightEd" />
-    <meta name="msapplication-TileColor" content="#1976d2" />
-    <meta name="msapplication-config" content="%PUBLIC_URL%/browserconfig.xml" />
-    
-    <!-- Icons -->
-    <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo192.png" />
-    <link rel="apple-touch-icon" sizes="192x192" href="%PUBLIC_URL%/logo192.png" />
-    <link rel="apple-touch-icon" sizes="512x512" href="%PUBLIC_URL%/logo512.png" />
-    
-    <!-- Manifest -->
-    <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-    <!-- Tenorite font -->
-    <link href="https://fonts.cdnfonts.com/css/tenorite" rel="stylesheet">
-    <style>
-      /* Apply Tenorite as the global app font with fallbacks */
-      :root { font-family: 'Tenorite', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; }
-      html, body, #root { height: 100%; font-family: inherit; }
-    </style>
-    
-    <title>InzightEd - AI Tutoring Platform</title>
-  </head>
-  <body>
-    <noscript>You need to enable JavaScript to run this app.</noscript>
-    <div id="root"></div>
-  </body>
+
+<head>
+  <meta charset="utf-8" />
+  <!-- Absolute fallback so the favicon still resolves during dev or non-CRA hosting -->
+  <!-- Use an absolute root path for the favicon so it resolves consistently from any route -->
+  <!-- Add explicit type/sizes so browsers correctly recognize the file -->
+  <link rel="icon" href="./favicon.svg" type="image/x-icon" sizes="32x32" />
+  <link rel="shortcut icon" href="./favicon.svg" type="image/x-icon" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#1976d2" />
+  <meta name="description"
+    content="InzightEd - Your personal AI tutor for interactive learning and document-based tutoring sessions" />
+  <meta name="keywords" content="education, tutoring, AI, learning, study, documents" />
+  <meta name="author" content="InzightEd" />
+
+  <!-- PWA Meta Tags -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="InzightEd" />
+  <meta name="msapplication-TileColor" content="#1976d2" />
+  <meta name="msapplication-config" content="%PUBLIC_URL%/browserconfig.xml" />
+
+  <!-- Icons -->
+  <!-- Prefer PNG icons for apple-touch-icon; SVG is not recommended for iOS home screen icons -->
+  <link rel="apple-touch-icon" href="%PUBLIC_URL%/logo.svg" />
+  <link rel="apple-touch-icon" sizes="192x192" href="%PUBLIC_URL%/logo.svg" />
+  <link rel="apple-touch-icon" sizes="512x512" href="%PUBLIC_URL%/logo.svg" />
+
+  <!-- Manifest -->
+  <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
+  <!-- Tenorite font -->
+  <link href="https://fonts.cdnfonts.com/css/tenorite" rel="stylesheet">
+  <style>
+    /* Apply Tenorite as the global app font with fallbacks */
+    :root {
+      font-family: 'Tenorite', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial;
+    }
+
+    html,
+    body,
+    #root {
+      height: 100%;
+      font-family: inherit;
+    }
+  </style>
+
+  <title>InzightEd</title>
+</head>
+
+<body>
+  <noscript>You need to enable JavaScript to run this app.</noscript>
+  <div id="root"></div>
+</body>
+
 </html>

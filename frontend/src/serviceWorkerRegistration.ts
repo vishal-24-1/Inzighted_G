@@ -17,6 +17,15 @@ type Config = {
 };
 
 export function register(config?: Config) {
+  // Only register the service worker in production builds. During development
+  // the dev server and repeated builds can cause multiple GenerateSW calls
+  // and an active service worker may serve stale assets (including the
+  // favicon). Guarding by NODE_ENV prevents that.
+  if (process.env.NODE_ENV !== 'production') {
+    console.log('Service worker not registered in development.');
+    return;
+  }
+
   if ('serviceWorker' in navigator) {
     const wb = new Workbox('/service-worker.js');
 

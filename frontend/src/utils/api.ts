@@ -100,8 +100,13 @@ export const chatAPI = {
 };
 
 export const tutoringAPI = {
-  startSession: (documentId?: string) => 
-    api.post('/tutoring/start/', { document_id: documentId }),
+  // Accept either a single document id or an array of document ids
+  startSession: (documentId?: string | string[]) => {
+    if (Array.isArray(documentId)) {
+      return api.post('/tutoring/start/', { document_ids: documentId });
+    }
+    return api.post('/tutoring/start/', { document_id: documentId });
+  },
   
   submitAnswer: (sessionId: string, text: string) =>
     api.post(`/tutoring/${sessionId}/answer/`, { text }),

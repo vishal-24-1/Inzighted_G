@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { documentsAPI } from '../utils/api';
+import { X } from 'lucide-react';
 
 interface Document {
   id: string;
@@ -10,7 +11,7 @@ interface Document {
 }
 
 interface DocumentSelectorProps {
-  onDocumentSelect: (documentId: string | null) => void;
+  onDocumentSelect: (documentIds: string[]) => void;
   onCancel: () => void;
   startingSession?: boolean;
 }
@@ -24,10 +25,40 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
     loadDocuments();
   }, []);
 
+  // Deduplicate documents by filename (case-insensitive). If multiple documents
+  // share the same filename, prefer the one with status 'completed', otherwise
+  // prefer the newest by upload_date.
+  const dedupeDocuments = (docs: Document[]): Document[] => {
+    const map = new Map<string, Document>();
+    for (const doc of docs) {
+      const key = (doc.filename || '').trim().toLowerCase();
+      if (!map.has(key)) {
+        map.set(key, doc);
+        continue;
+      }
+      const existing = map.get(key)!;
+      // Prefer completed status
+      if (doc.status === 'completed' && existing.status !== 'completed') {
+        map.set(key, doc);
+        continue;
+      }
+      if (doc.status === existing.status) {
+        // Prefer the newer upload
+        const docDate = new Date(doc.upload_date).getTime();
+        const existingDate = new Date(existing.upload_date).getTime();
+        if (!isNaN(docDate) && !isNaN(existingDate) && docDate > existingDate) {
+          map.set(key, doc);
+        }
+      }
+    }
+    return Array.from(map.values());
+  };
+
   const loadDocuments = async () => {
     try {
       const response = await documentsAPI.list();
-      setDocuments(response.data);
+      const docs: Document[] = response.data || [];
+      setDocuments(dedupeDocuments(docs));
     } catch (error: any) {
       setError('Failed to load documents. Please try again.');
       console.error('Error loading documents:', error);
@@ -68,147 +99,173 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
 
   const completedDocuments = documents.filter(doc => doc.status === 'completed');
   const processingDocuments = documents.filter(doc => doc.status === 'processing');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+  const toggleSelection = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   if (loading) {
     return (
-      <div className="document-selector-overlay">
-        <div className="document-selector-modal">
-          <div className="loading-container">
-            <div className="loading-spinner"></div>
-            <p>Loading your documents...</p>
-          </div>
+      <div
+        className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4"
+        role="status"
+        aria-live="polite"
+      >
+        <div className="bg-white rounded-lg p-6 shadow-lg max-w-md w-full flex flex-col items-center">
+          <div className="animate-spin h-8 w-8 border-4 border-gray-200 border-t-blue-600 rounded-full" aria-hidden="true" />
+          <p className="mt-3 text-gray-700">Loading your documents...</p>
         </div>
       </div>
     );
   }
-
-  // startingSession prop is used to display an overlay while a session is being created
-
   return (
-    <div className="document-selector-overlay">
-      <div className="document-selector-modal">
-        {/* Overlay shown when parent is starting a session */}
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" role="dialog" aria-modal="true">
+      <div className="relative bg-white rounded-lg shadow-lg max-w-2xl w-full max-h-[80vh] overflow-auto">
         {startingSession && (
-          <div className="modal-overlay-loading">
-            <div className="loading-container">
-              <div className="loading-spinner"></div>
-              <p>Starting tutoring session...</p>
+          <div className="absolute inset-0 bg-white/70 flex items-center justify-center rounded-lg">
+            <div className="flex flex-col items-center">
+              <div className="animate-spin h-8 w-8 border-4 border-gray-200 border-t-blue-600 rounded-full" aria-hidden="true" />
+              <p className="mt-3 text-gray-700">Starting tutoring session...</p>
             </div>
           </div>
         )}
-        <div className="modal-header">
-          <h2>Start Tutoring Session</h2>
-          <p>Which document would you like to base this session on?</p>
+
+        <div className="p-6">
+          <div className="mb-4 flex items-start justify-between">
+            <div>
+              <h2 className="text-lg font-semibold">Start Tutoring Session</h2>
+              <p className="text-sm text-gray-600">Select one or more documents to include in the test.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                aria-label="Close"
+                onClick={onCancel}
+                className="p-2 rounded-md hover:bg-gray-100"
+              >
+                <X size={18} />
+              </button>
+            </div>
+          </div>
+
+          <div>
+            {error && (
+              <div className="mb-4 text-sm text-red-600">{error}</div>
+            )}
+
+            {completedDocuments.length === 0 && processingDocuments.length === 0 && (
+              <div className="flex flex-col items-center text-center py-8">
+                <div className="text-4xl">📄</div>
+                <h3 className="mt-3 text-lg font-medium">No Documents Found</h3>
+                <p className="mt-2 text-sm text-gray-600 max-w-xl">You haven't uploaded any documents yet. Upload a document first to start a personalized tutoring session.</p>
+                <div className="mt-6 w-full flex gap-3">
+                  <button
+                    className="flex-1 bg-blue-600 text-white py-2 rounded-lg"
+                    onClick={() => onDocumentSelect([])}
+                  >
+                    Start General Tutoring
+                  </button>
+                  <button
+                    className="flex-1 bg-gray-100 text-gray-700 py-2 rounded-lg"
+                    onClick={onCancel}
+                  >
+                    Upload Document First
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(completedDocuments.length > 0 || processingDocuments.length > 0) && (
+              <>
+                {completedDocuments.length > 0 && (
+                  <div className="mb-4">
+                    <h3 className="text-sm font-medium mb-2">Ready for Tutoring</h3>
+                    <div className="flex flex-col gap-2">
+                      {completedDocuments.map((doc) => (
+                        <button
+                          key={doc.id}
+                          onClick={() => toggleSelection(doc.id)}
+                          className={`flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 text-left w-full ${selectedIds.has(doc.id) ? 'bg-blue-50' : ''}`}
+                        >
+                          <div className="text-2xl">📄</div>
+                          <div className="flex-1">
+                            <div className="font-medium">{doc.filename}</div>
+                            <div className="text-xs text-gray-500">
+                              {formatFileSize(doc.file_size)} • {formatDate(doc.upload_date)}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="text-sm font-medium" style={{ color: getStatusColor(doc.status) }}>
+                              Ready
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={selectedIds.has(doc.id)}
+                              onChange={() => toggleSelection(doc.id)}
+                              className="w-4 h-4"
+                              aria-label={`Select ${doc.filename}`}
+                            />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {processingDocuments.length > 0 && (
+                  <div className="mb-4">
+                    <h3 className="text-sm font-medium mb-2">Processing</h3>
+                    <div className="flex flex-col gap-2">
+                      {processingDocuments.map((doc) => (
+                        <div key={doc.id} className="flex items-center gap-3 p-3 rounded-lg bg-gray-50 opacity-80">
+                          <div className="text-2xl">⏳</div>
+                          <div className="flex-1">
+                            <div className="font-medium">{doc.filename}</div>
+                            <div className="text-xs text-gray-500">
+                              {formatFileSize(doc.file_size)} • {formatDate(doc.upload_date)}
+                            </div>
+                          </div>
+                          <div className="text-sm font-medium" style={{ color: getStatusColor(doc.status) }}>
+                            Processing...
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* footer removed: primary action is now in header; keep a small hint */}
+                <div className="mt-4 text-sm text-gray-500">Select documents and click "Start Test" below.</div>
+              </>
+            )}
+          </div>
         </div>
-
-        <div className="modal-content">
-          {error && (
-            <div className="error-message">
-              {error}
-            </div>
-          )}
-
-          {completedDocuments.length === 0 && processingDocuments.length === 0 && (
-            <div className="no-documents">
-              <div className="no-docs-icon">📄</div>
-              <h3>No Documents Found</h3>
-              <p>You haven't uploaded any documents yet. Upload a document first to start a personalized tutoring session.</p>
-              <div className="modal-actions">
-                <button 
-                  className="btn-primary" 
-                  onClick={() => onDocumentSelect(null)}
-                >
-                  Start General Tutoring
-                </button>
-                <button 
-                  className="btn-secondary" 
-                  onClick={onCancel}
-                >
-                  Upload Document First
-                </button>
-              </div>
-            </div>
-          )}
-
-          {(completedDocuments.length > 0 || processingDocuments.length > 0) && (
-            <>
-              {completedDocuments.length > 0 && (
-                <div className="documents-section">
-                  <h3>Ready for Tutoring</h3>
-                  <div className="documents-list">
-                    {completedDocuments.map((doc) => (
-                      <div 
-                        key={doc.id} 
-                        className="document-item"
-                        onClick={() => onDocumentSelect(doc.id)}
-                      >
-                        <div className="document-icon">📄</div>
-                        <div className="document-info">
-                          <div className="document-name">{doc.filename}</div>
-                          <div className="document-meta">
-                            <span>{formatFileSize(doc.file_size)}</span>
-                            <span>•</span>
-                            <span>{formatDate(doc.upload_date)}</span>
-                          </div>
-                        </div>
-                        <div 
-                          className="document-status"
-                          style={{ color: getStatusColor(doc.status) }}
-                        >
-                          Ready
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+        {/* Sticky footer with primary action */}
+        <div className="sticky bottom-0 bg-white p-4 border-t">
+          <div className="flex justify-end">
+            <button
+              className={`w-full md:w-48 px-4 py-2 rounded-md text-sm font-medium ${selectedIds.size === 0 || startingSession ? 'bg-gray-200 text-gray-500 cursor-not-allowed' : 'bg-blue-600 text-white'}`}
+              onClick={() => {
+                if (startingSession || selectedIds.size === 0) return;
+                onDocumentSelect(Array.from(selectedIds));
+              }}
+              disabled={selectedIds.size === 0 || startingSession}
+            >
+              {startingSession ? (
+                <div className="flex items-center justify-center gap-2">
+                  <div className="animate-spin h-4 w-4 border-2 border-white/60 border-t-white rounded-full" aria-hidden="true" />
+                  <span>Starting...</span>
                 </div>
+              ) : (
+                'Start Test'
               )}
-
-              {processingDocuments.length > 0 && (
-                <div className="documents-section">
-                  <h3>Processing</h3>
-                  <div className="documents-list">
-                    {processingDocuments.map((doc) => (
-                      <div 
-                        key={doc.id} 
-                        className="document-item disabled"
-                      >
-                        <div className="document-icon">⏳</div>
-                        <div className="document-info">
-                          <div className="document-name">{doc.filename}</div>
-                          <div className="document-meta">
-                            <span>{formatFileSize(doc.file_size)}</span>
-                            <span>•</span>
-                            <span>{formatDate(doc.upload_date)}</span>
-                          </div>
-                        </div>
-                        <div 
-                          className="document-status"
-                          style={{ color: getStatusColor(doc.status) }}
-                        >
-                          Processing...
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="modal-actions">
-                <button 
-                  className="btn-secondary" 
-                  onClick={() => onDocumentSelect(null)}
-                >
-                  Start General Tutoring
-                </button>
-                <button 
-                  className="btn-outline" 
-                  onClick={onCancel}
-                >
-                  Cancel
-                </button>
-              </div>
-            </>
-          )}
+            </button>
+          </div>
         </div>
       </div>
     </div>
