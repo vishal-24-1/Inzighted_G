@@ -17,11 +17,23 @@ interface Session {
 }
 
 interface Insights {
-  focus_zone: string[];
-  steady_zone: string[];
-  edge_zone: string[];
-  xp_points: number;
-  accuracy: number;
+  // new BoostMe fields (may come nested under `insights` or as top-level `zone_performance` / `performance`)
+  focus_zone?: string[];
+  steady_zone?: string[];
+  edge_zone?: string[];
+  xp_points?: number;
+  accuracy?: number;
+  // support alternate shapes
+  zone_performance?: {
+    focus?: any;
+    steady?: any;
+    edge?: any;
+  };
+  performance?: {
+    accuracy?: number;
+    xp?: number;
+    xp_points?: number;
+  };
 }
 
 interface SessionInsights {
@@ -44,6 +56,7 @@ const BoostMe: React.FC = () => {
   const [touchEnd, setTouchEnd] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showProfilePopup, setShowProfilePopup] = useState(false);
+
 
   useEffect(() => {
     // If URL has a session query param, we'll auto-select that session after loading
@@ -108,18 +121,45 @@ const BoostMe: React.FC = () => {
     try {
       const response = await insightsAPI.getSessionInsights(sessionId);
 
-      // Normalize insight fields
-      const data = response.data as SessionInsights;
-      const parsed = {
-        ...data,
-        insights: {
-          focus_zone: parseZoneField(data.insights?.focus_zone),
-          steady_zone: parseZoneField(data.insights?.steady_zone),
-          edge_zone: parseZoneField(data.insights?.edge_zone),
-          xp_points: data.insights?.xp_points || 0,
-          accuracy: data.insights?.accuracy || 0,
-        },
-      } as SessionInsights;
+      // Normalize insight fields to our UI-friendly `insights` shape.
+      const raw = response.data as any;
+
+      // Prefer new top-level shape: { zone_performance, performance }
+      const zonePerf = (raw.zone_performance || raw.insights?.zone_performance) as any;
+      const perf = (raw.performance || raw.insights?.performance) as any;
+
+      // If server returned zone_performance/performance, use those; otherwise fall back to legacy `insights` shape
+      const parsedInsights: Insights = {
+        focus_zone: parseZoneField(zonePerf?.focus ?? raw.insights?.focus_zone ?? raw.insights?.focus),
+        steady_zone: parseZoneField(zonePerf?.steady ?? raw.insights?.steady_zone ?? raw.insights?.steady),
+        edge_zone: parseZoneField(zonePerf?.edge ?? raw.insights?.edge_zone ?? raw.insights?.edge),
+        xp_points: perf?.xp ?? perf?.xp_points ?? raw.insights?.xp_points ?? raw.insights?.xp ?? 0,
+        accuracy: perf?.accuracy ?? raw.insights?.accuracy ?? 0,
+        // keep copies of raw shapes in case other code expects them
+        zone_performance: zonePerf,
+        performance: perf,
+      };
+
+      // Backwards-compatibility: if only legacy SWOT exists, map it into our zones so UI isn't empty
+      // Check multiple legacy key variants to be resilient to different payload shapes
+      const legacySwot = raw.swot_analysis || raw.legacy_swot || raw.swot || raw.insights?.swot_analysis || raw.insights?.swot || raw.insights?.legacy_swot;
+      if (legacySwot) {
+        // Map: strength -> steady, weakness -> focus, opportunity -> edge, threat -> (append to edge)
+        parsedInsights.steady_zone = parseZoneField(legacySwot.strength ?? legacySwot.strengths ?? parsedInsights.steady_zone);
+        parsedInsights.focus_zone = parseZoneField(legacySwot.weakness ?? legacySwot.weaknesses ?? parsedInsights.focus_zone);
+        parsedInsights.edge_zone = parseZoneField(legacySwot.opportunity ?? legacySwot.opportunities ?? parsedInsights.edge_zone);
+        // If there's a 'threat', append it to edge_zone for visibility
+        const threat = legacySwot.threat || legacySwot.threats;
+        if (threat) {
+          const existing = Array.isArray(parsedInsights.edge_zone) ? parsedInsights.edge_zone : parseZoneField(parsedInsights.edge_zone);
+          parsedInsights.edge_zone = [...existing, ...parseZoneField(threat)];
+        }
+      }
+
+      const parsed: any = {
+        ...raw,
+        insights: parsedInsights,
+      };
 
       setInsights(parsed);
       setCurrentCardIndex(0); // Reset to first card
@@ -162,13 +202,15 @@ const BoostMe: React.FC = () => {
     const isLeftSwipe = distance > minSwipeDistance;
     const isRightSwipe = distance < -minSwipeDistance;
 
-    if (isLeftSwipe && currentCardIndex < 3) {
+    if (isLeftSwipe && currentCardIndex < cardCount - 1) {
       setCurrentCardIndex(currentCardIndex + 1);
     }
     if (isRightSwipe && currentCardIndex > 0) {
       setCurrentCardIndex(currentCardIndex - 1);
     }
   };
+
+
 
   const boostMeCards = insights ? [
     {
@@ -278,6 +320,7 @@ const BoostMe: React.FC = () => {
           </div>
         )}
 
+
         {/* Loading */}
         {loading ? (
           <div className="flex flex-col items-center justify-center py-10">
@@ -346,7 +389,7 @@ const BoostMe: React.FC = () => {
                   <Award size={24} className="text-purple-600" />
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-purple-700">{insights.insights.xp_points}</p>
+                  <p className="text-2xl font-bold text-purple-700">{insights.insights.xp_points ?? 0}</p>
                   <p className="text-xs text-purple-600 font-medium">XP Points</p>
                 </div>
               </div>
@@ -357,7 +400,7 @@ const BoostMe: React.FC = () => {
                   <Percent size={24} className="text-green-600" />
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-green-700">{insights.insights.accuracy.toFixed(0)}%</p>
+                  <p className="text-2xl font-bold text-green-700">{(insights.insights.accuracy ?? 0).toFixed(0)}%</p>
                   <p className="text-xs text-green-600 font-medium">Accuracy</p>
                 </div>
               </div>
