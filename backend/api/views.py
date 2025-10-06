@@ -24,6 +24,35 @@ import time
 from google.oauth2 import id_token
 from google.auth.transport import requests
 
+# Utility: check Celery availability (ping workers)
+def is_celery_available(timeout: int = 1) -> bool:
+    """Return True if Celery workers are available to accept tasks.
+
+    Uses the Celery app control inspect().ping() call. Returns False on any
+    exception or when no workers respond.
+    """
+    try:
+        # Import here to avoid import-time side-effects if Celery isn't configured
+        from hellotutor.celery import app as celery_app
+
+        insp = celery_app.control.inspect(timeout=timeout)
+        if insp is None:
+            return False
+        ping = insp.ping()
+        # ping returns dict of {worker_name: {'ok': 'pong'}} when workers present
+        if not ping:
+            return False
+        return True
+    except Exception as e:
+        # Be conservative: on any error assume Celery unavailable
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_message(f"Celery availability check failed: {e}", level="warning")
+        except Exception:
+            pass
+        print(f"Celery availability check failed: {e}")
+        return False
+
 class RegisterView(APIView):
     """
     API view to handle user registration.
@@ -272,15 +301,62 @@ class IngestView(APIView):
                 document.save()
                 
                 # Enqueue Celery task for asynchronous processing
+                # First check if Celery workers are available; if not, immediately
+                # fall back to synchronous processing to avoid leaving documents
+                # in 'processing' state indefinitely.
+                if not is_celery_available(timeout=1):
+                    print("⚠️ Celery not available (no workers responding). Falling back to synchronous processing.")
+                    sentry_sdk.capture_message(
+                        "Celery unavailable - falling back to synchronous ingestion",
+                        level="warning",
+                        extras={
+                            "document_id": str(document.id),
+                            "user_id": user_id
+                        }
+                    )
+                    try:
+                        success = ingest_document_from_s3(s3_key, user_id)
+                        if not success:
+                            document.status = 'failed'
+                            document.save()
+                            return Response({
+                                "error": "Document ingestion failed.",
+                                "details": "Failed to process document from S3"
+                            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+                        document.status = 'completed'
+                        document.save()
+
+                        return Response({
+                            "message": "Document uploaded and processed successfully (synchronous fallback).",
+                            "document": DocumentSerializer(document).data,
+                            "async": False
+                        }, status=status.HTTP_201_CREATED)
+
+                    except Exception as sync_error:
+                        document.status = 'failed'
+                        document.save()
+                        sentry_sdk.capture_exception(sync_error, extras={
+                            "component": "document_ingestion",
+                            "view": "IngestView",
+                            "mode": "sync_fallback",
+                            "user_id": user_id,
+                            "filename": file_obj.name
+                        })
+                        return Response({
+                            "error": "Document processing failed.",
+                            "details": str(sync_error)
+                        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
                 try:
                     task = process_document.delay(
                         s3_key=s3_key,
                         user_id=user_id,
                         document_id=str(document.id)
                     )
-                    
-                    print(f"✅ Celery task enqueued: {task.id} for document {document.id}")
-                    
+
+                    print(f"\u2705 Celery task enqueued: {task.id} for document {document.id}")
+
                     # Return immediate success response
                     return Response({
                         "message": "Document uploaded successfully. Processing started in background.",
@@ -289,12 +365,12 @@ class IngestView(APIView):
                         "async": True,
                         "status": "processing"
                     }, status=status.HTTP_202_ACCEPTED)
-                    
+
                 except Exception as celery_error:
-                    # If Celery is not available, fall back to synchronous processing
-                    print(f"⚠️  Celery not available: {celery_error}. Falling back to synchronous processing.")
+                    # If Celery raises an exception when trying to enqueue, fall back
+                    print(f"⚠️  Celery enqueue error: {celery_error}. Falling back to synchronous processing.")
                     sentry_sdk.capture_message(
-                        "Celery unavailable, using synchronous processing",
+                        "Celery enqueue failed, using synchronous processing",
                         level="warning",
                         extras={
                             "error": str(celery_error),
@@ -302,7 +378,6 @@ class IngestView(APIView):
                             "user_id": user_id
                         }
                     )
-                    
                     # Process synchronously as fallback
                     try:
                         success = ingest_document_from_s3(s3_key, user_id)
@@ -313,16 +388,16 @@ class IngestView(APIView):
                                 "error": "Document ingestion failed.",
                                 "details": "Failed to process document from S3"
                             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-                        
+
                         document.status = 'completed'
                         document.save()
-                        
+
                         return Response({
                             "message": "Document uploaded and processed successfully (synchronous fallback).",
                             "document": DocumentSerializer(document).data,
                             "async": False
                         }, status=status.HTTP_201_CREATED)
-                        
+
                     except Exception as sync_error:
                         document.status = 'failed'
                         document.save()
