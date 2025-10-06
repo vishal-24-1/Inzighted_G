@@ -150,9 +150,44 @@ android {
 
         
     }
+    // Load keystore properties (keystore.properties) if present. Falls back to environment variables.
+    def keystorePropertiesFile = rootProject.file("keystore.properties")
+    def keystoreProperties = new Properties()
+    if (keystorePropertiesFile.exists()) {
+        keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
+    }
+
+    signingConfigs {
+        release {
+            if (keystorePropertiesFile.exists()) {
+                def storeFileProp = keystoreProperties['storeFile'] ?: 'android.keystore'
+                storeFile file(storeFileProp)
+                storePassword keystoreProperties['storePassword']
+                keyAlias keystoreProperties['keyAlias']
+                keyPassword keystoreProperties['keyPassword']
+            } else {
+                // Fallback to environment variables (useful on CI)
+                def envStoreFile = System.getenv('KEYSTORE_FILE')
+                if (envStoreFile != null) {
+                    storeFile file(envStoreFile)
+                } else {
+                    // default to the bundled keystore if present
+                    storeFile file('android.keystore')
+                }
+                storePassword System.getenv('KEYSTORE_PASSWORD')
+                keyAlias System.getenv('KEY_ALIAS')
+                keyPassword System.getenv('KEY_PASSWORD')
+            }
+        }
+    }
+
     buildTypes {
         release {
             minifyEnabled true
+            shrinkResources true
+            // Use the signing config defined above when available
+            signingConfig signingConfigs.release
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
     compileOptions {
