@@ -65,7 +65,7 @@ const UserProfilePopup: React.FC<UserProfilePopupProps> = ({ onClose }) => {
             onClick={handleLogout}
           >
             <LogOut className="h-4 w-4" />
-            Sign Out
+            Logout
           </button>
         </div>
       </div>

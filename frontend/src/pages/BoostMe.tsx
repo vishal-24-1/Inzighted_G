@@ -183,6 +183,40 @@ const BoostMe: React.FC = () => {
     });
   };
 
+  // Simple circular progress component (value: 0-100)
+  const CircleProgress: React.FC<{ value: number; size?: number; strokeWidth?: number; color?: string }> = ({ value, size = 84, strokeWidth = 8, color = '#10B981' }) => {
+    const capped = Math.max(0, Math.min(100, Number(value) || 0));
+    const radius = (size - strokeWidth) / 2;
+    const circumference = 2 * Math.PI * radius;
+    const offset = circumference * (1 - capped / 100);
+
+    return (
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <g transform={`translate(${size / 2}, ${size / 2})`}>
+          <circle
+            r={radius}
+            fill="none"
+            stroke="#EEF2F7"
+            strokeWidth={strokeWidth}
+          />
+          <circle
+            r={radius}
+            fill="none"
+            stroke={color}
+            strokeWidth={strokeWidth}
+            strokeLinecap="round"
+            strokeDasharray={`${circumference} ${circumference}`}
+            strokeDashoffset={offset}
+            transform="rotate(-90)"
+          />
+          <text x="0" y="4" textAnchor="middle" fontSize={14} fontWeight={600} fill="#0F172A">
+            {capped.toFixed(0)}%
+          </text>
+        </g>
+      </svg>
+    );
+  };
+
   // Touch/swipe handling
   const minSwipeDistance = 50;
 
@@ -266,7 +300,7 @@ const BoostMe: React.FC = () => {
           className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
           aria-label="New chat"
           title="New chat"
-          onClick={() => navigate('/chat')}
+          onClick={() => navigate('/')}
         >
           <ChatIcon size={18} className="text-blue-600" />
         </button>
@@ -314,9 +348,18 @@ const BoostMe: React.FC = () => {
 
       <main className="w-full max-w-md px-3 md:ml-72 mx-auto md:mx-0">
         {selectedSession && (
-          <div className="mt-3 text-left">
-            <h2 className="text-base font-semibold">AI Generated Tips</h2>
-            {insights && <p className="text-xs text-gray-500">{insights.total_qa_pairs} Q&A pairs analyzed</p>}
+          <div className="mt-3">
+            {/* Center the circle, but left-align the title/subtitle */}
+            {insights ? (
+              <>
+                <div className="text-left">
+                  <h2 className="text-base font-semibold">AI Generated Tips</h2>
+                  <p className="text-xs text-gray-500">{insights.total_qa_pairs} Q&A pairs analyzed</p>
+                </div>
+              </>
+            ) : (
+              <h2 className="text-base font-semibold">AI Generated Tips</h2>
+            )}
           </div>
         )}
 
@@ -381,30 +424,38 @@ const BoostMe: React.FC = () => {
 
             <div className="text-xs text-gray-500 mt-3 text-center">← Swipe to explore insights →</div>
 
-            {/* XP and Accuracy Metrics */}
-            <div className="mt-6 grid grid-cols-2 gap-4">
-              {/* XP Points Card */}
-              <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 shadow-sm border border-purple-200">
-                <div className="flex items-center justify-center mb-2">
-                  <Award size={24} className="text-purple-600" />
+            {/* Accuracy circle with XP badge overlayed (moved XP into the circle) */}
+            {insights && (
+              <>
+                <div className="mt-4 mb-2 text-left">
+                  <h3 className="font-bold">Accuracy & XP Points</h3>
                 </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-purple-700">{insights.insights.xp_points ?? 0}</p>
-                  <p className="text-xs text-purple-600 font-medium">XP Points</p>
-                </div>
-              </div>
+                <div className="flex justify-center my-4 bg-gray-50 border rounded-xl p-4 relative">
+                  {/* XP badge placed at the top-right of the circle container (not over the circle) */}
+                  <div
+                    className="absolute right-3 top-3"
+                    aria-hidden={false}
+                    title={`${insights.insights.xp_points ?? 0} XP points`}
+                  >
+                    <div className="bg-blue-500 text-white text-xs font-semibold rounded-full px-2 py-1 shadow-md flex items-center gap-1">
+                      <Award size={14} className="text-white" />
+                      <span>{insights.insights.xp_points ?? 0} XP</span>
+                    </div>
+                  </div>
 
-              {/* Accuracy Card */}
-              <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 shadow-sm border border-green-200">
-                <div className="flex items-center justify-center mb-2">
-                  <Percent size={24} className="text-green-600" />
+                  <div className="flex items-center justify-center w-full">
+                    {/* Circle centered inside the container */}
+                    <CircleProgress value={insights.insights.accuracy ?? 0} size={92} strokeWidth={10} color="#10B981" />
+                  </div>
                 </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-green-700">{(insights.insights.accuracy ?? 0).toFixed(0)}%</p>
-                  <p className="text-xs text-green-600 font-medium">Accuracy</p>
+                {/* Brief explanation below the circle */}
+                <div className="text-center text-sm text-gray-600 mt-2 px-4">
+                  <p className="mt-1 text-xs text-gray-500">Tip: Start with Focus Zone to improve fastest.</p>
                 </div>
-              </div>
-            </div>
+              </>
+            )}
+
+            {/* XP now shown as a badge overlaying the accuracy circle above. The separate XP card was removed. */}
           </div>
         ) : selectedSession ? (
           <div className="text-center py-8">
