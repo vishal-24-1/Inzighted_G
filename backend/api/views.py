@@ -4,6 +4,7 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 import sentry_sdk
+import logging
 from .serializers import (
     RagQuerySerializer, DocumentIngestSerializer, 
     UserRegistrationSerializer, UserLoginSerializer, 
@@ -19,6 +20,8 @@ from .gemini_client import gemini_client
 from .tasks import process_document
 import os
 import tempfile
+
+logger = logging.getLogger(__name__)
 from django.conf import settings
 import time
 from google.oauth2 import id_token
@@ -646,17 +649,20 @@ class TutoringSessionStartView(APIView):
     """
     API view to start a tutoring session.
     Creates a new ChatSession and generates the first tutoring question.
+    NOW USES: Tanglish Agent with structured questions, archetypes, and intent classification.
     """
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
         document_id = request.data.get('document_id')
+        language = request.data.get('language', 'tanglish')  # Support language preference
         
         try:
             user = request.user
             user_id = str(user.id)
             
             # Verify document exists and belongs to user
+            document = None
             if document_id:
                 try:
                     document = Document.objects.get(id=document_id, user=user, status='completed')
@@ -674,35 +680,46 @@ class TutoringSessionStartView(APIView):
                 )
 
             # Create session title
-            session_title = f"Tutoring Session - {document.filename}" if document_id and 'document' in locals() else "General Tutoring Session"
+            session_title = f"Tutoring Session - {document.filename}" if document else "General Tutoring Session"
             
-            # Create new tutoring session
+            # Create new tutoring session with language preference
             session = ChatSession.objects.create(
                 user=user,
                 title=session_title,
-                document=document if document_id and 'document' in locals() else None
+                document=document,
+                language=language
             )
             
-            # Generate first tutoring question
+            # Use NEW Tanglish Agent to generate structured questions
+            from .agent_flow import TutorAgent
+            agent = TutorAgent(session)
+            
+            # Get first question from structured batch
             start_time = time.time()
-            first_question = generate_tutoring_question(user_id, document_id, session_id=str(session.id))
+            first_question_text, first_question_item = agent.get_next_question()
             response_time_ms = int((time.time() - start_time) * 1000)
+            
+            if not first_question_text:
+                return Response(
+                    {"error": "Failed to generate first question"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
             # Save the first question as a bot message
             question_message = ChatMessage.objects.create(
                 session=session,
                 user=user,
-                content=first_question,
+                content=first_question_text,
                 is_user_message=False,
                 response_time_ms=response_time_ms,
-                token_count=len(first_question.split())
+                token_count=len(first_question_text.split())
             )
 
             return Response({
                 "session_id": str(session.id),
                 "first_question": {
                     "id": str(question_message.id),
-                    "text": first_question,
+                    "text": first_question_text,
                     "created_at": question_message.created_at.isoformat()
                 }
             }, status=status.HTTP_201_CREATED)
@@ -723,7 +740,7 @@ class TutoringSessionStartView(APIView):
 class TutoringSessionAnswerView(APIView):
     """
     API view to handle student answers in a tutoring session.
-    Saves the answer and generates the next question.
+    NOW USES: Intent classification, answer evaluation with XP, and Tanglish feedback.
     """
     permission_classes = [IsAuthenticated]
 
@@ -749,86 +766,122 @@ class TutoringSessionAnswerView(APIView):
                     status=status.HTTP_404_NOT_FOUND
                 )
             
-            # Save student's answer
-            answer_message = ChatMessage.objects.create(
-                session=session,
-                user=user,
-                content=answer_text,
-                is_user_message=True
-            )
+            # Use NEW Tanglish Agent for intent classification and evaluation
+            from .agent_flow import TutorAgent
+            from .models import QuestionItem
             
-            # Check if we should continue or end the session
-            message_count = session.messages.count()
-            user_answers_count = session.messages.filter(is_user_message=True).count()
+            agent = TutorAgent(session)
             
-            # Check if we have a question batch for this session
-            question_batch = TutoringQuestionBatch.objects.filter(session=session).first()
+            # Get current question batch and item
+            batch = agent.get_or_create_question_batch()
+            current_question_item = QuestionItem.objects.filter(
+                batch=batch,
+                order=batch.current_question_index
+            ).first()
             
-            if question_batch and question_batch.status in ['ready', 'in_progress']:
-                # We have an active question batch - continue until all questions are used
-                print(f"Question batch status: {question_batch.status}, progress: {question_batch.current_question_index + 1}/{question_batch.total_questions}")
-                
-                # Only end if we've exhausted all questions in the batch
-                if not question_batch.has_more_questions() and question_batch.status != 'completed':
-                    # Mark batch as completed
-                    question_batch.status = 'completed'
-                    question_batch.save()
-                    return Response({
-                        "finished": True,
-                        "message": f"Congratulations! You've completed all {question_batch.total_questions} questions in this tutoring session. Excellent work!"
-                    })
-                elif question_batch.status == 'completed':
-                    return Response({
-                        "finished": True,
-                        "message": f"You've already completed all {question_batch.total_questions} questions for this session. Well done!"
-                    })
-            else:
-                # No question batch - use legacy termination logic for backward compatibility
-                # For MVP, continue asking questions until we have at least 2 user answers (minimum requirement)
-                # and a maximum of 6 total messages (3 Q&A pairs)
-                if user_answers_count >= 2 and message_count >= 6:
-                    return Response({
-                        "finished": True,
-                        "message": "Great job! You've completed this tutoring session."
-                    })
-                elif user_answers_count >= 5:  # Maximum 5 answers to prevent overly long sessions
-                    return Response({
-                        "finished": True,
-                        "message": "Excellent work! You've completed an extended tutoring session."
-                    })
+            if not current_question_item:
+                return Response(
+                    {"error": "No current question found"},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
             
-            # Generate next question using the session context
+            # Handle user message through agent flow (intent classification + evaluation)
             start_time = time.time()
-            session_document_id = str(session.document.id) if session.document else None
-            if session_document_id:
-                print(f"Generating next question scoped to document: {session.document.filename}")
-            else:
-                print("Generating next question with general scope (no document selected)")
-            
-            # Generate next question using the session's document context
-            next_question = generate_tutoring_question(user_id, session_document_id, session_id=session_id)
+            result = agent.handle_user_message(answer_text, current_question_item)
             response_time_ms = int((time.time() - start_time) * 1000)
             
-            # Save the next question
-            question_message = ChatMessage.objects.create(
-                session=session,
-                user=user,
-                content=next_question,
-                is_user_message=False,
-                response_time_ms=response_time_ms,
-                token_count=len(next_question.split())
-            )
+            # DEBUG: Print the agent result
+            print(f"\n[VIEW] Agent result keys: {list(result.keys())}")
+            print(f"[VIEW] reply present: {result.get('reply') is not None}")
+            if result.get('reply'):
+                print(f"[VIEW] reply length: {len(result.get('reply', ''))}")
+                print(f"[VIEW] reply preview: {result.get('reply', '')[:100]}...")
+            print(f"[VIEW] next_question present: {result.get('next_question') is not None}")
+            print(f"[VIEW] evaluation present: {result.get('evaluation') is not None}")
+            print(f"[VIEW] session_complete: {result.get('session_complete')}\n")
+            
+            # Build response based on agent result
+            response_data = {
+                "session_id": str(session.id),
+                "response_time_ms": response_time_ms
+            }
+            
+            # Check if session is complete
+            if result.get('session_complete'):
+                response_data["finished"] = True
+                response_data["message"] = "Congratulations! You've completed all questions. Great work! 🎉"
+                
+                # Include evaluation if present
+                if result.get('evaluation'):
+                    eval_result = result['evaluation']
+                    response_data["evaluation"] = {
+                        "score": eval_result.score,
+                        "xp": eval_result.xp,
+                        "correct": eval_result.correct,
+                        "explanation": eval_result.explanation
+                    }
+                
+                return Response(response_data)
+            
+            # Add feedback/reply if agent provided one
+            if result.get('reply'):
+                print(f"[VIEW] ✅ Adding feedback to response")
+                # Save reply message
+                reply_msg = ChatMessage.objects.create(
+                    session=session,
+                    user=user,
+                    content=result['reply'],
+                    is_user_message=False,
+                    response_time_ms=response_time_ms
+                )
+                response_data["feedback"] = {
+                    "id": str(reply_msg.id),
+                    "text": result['reply']
+                }
+                print(f"[VIEW] Feedback text length: {len(result['reply'])}")
+            else:
+                print(f"[VIEW] ⚠️ No reply from agent, feedback not added")
+            
+            # Add next question
+            if result.get('next_question'):
+                print(f"[VIEW] ✅ Adding next_question to response")
+                # Save next question message
+                next_q_msg = ChatMessage.objects.create(
+                    session=session,
+                    user=user,
+                    content=result['next_question'],
+                    is_user_message=False
+                )
+                
+                response_data["next_question"] = {
+                    "id": str(next_q_msg.id),
+                    "text": result['next_question'],
+                    "created_at": next_q_msg.created_at.isoformat()
+                }
+            
+            # Add evaluation results (XP, score, explanation)
+            if result.get('evaluation'):
+                eval_result = result['evaluation']
+                response_data["evaluation"] = {
+                    "score": eval_result.score,
+                    "xp": eval_result.xp,
+                    "correct": eval_result.correct,
+                    "explanation": eval_result.explanation,
+                    "followup_action": eval_result.followup_action
+                }
 
             # Update session timestamp
             session.save()
 
-            return Response({
-                "next_question": {
-                    "id": str(question_message.id),
-                    "text": next_question,
-                    "created_at": question_message.created_at.isoformat()
-                }
-            })
+            # DEBUG: Print final response structure
+            print(f"\n[VIEW] ========== FINAL RESPONSE ==========")
+            print(f"[VIEW] Response keys: {list(response_data.keys())}")
+            print(f"[VIEW] Has feedback: {'feedback' in response_data}")
+            print(f"[VIEW] Has next_question: {'next_question' in response_data}")
+            print(f"[VIEW] Has evaluation: {'evaluation' in response_data}")
+            print(f"{'='*45}\n")
+            
+            return Response(response_data)
 
         except Exception as e:
             sentry_sdk.capture_exception(e, extras={
@@ -973,6 +1026,7 @@ class SessionInsightsView(APIView):
             # Return successful insights
             document_name = insight.document.filename if insight.document else session.get_title()
             
+            # Return BoostMe insights format
             return Response({
                 "session_id": str(session.id),
                 "document_name": document_name,
@@ -980,12 +1034,21 @@ class SessionInsightsView(APIView):
                 "total_qa_pairs": insight.total_qa_pairs,
                 "session_duration": insight.get_session_duration(),
                 "status": insight.status,
+                # BoostMe insights
                 "insights": {
-                    "strength": insight.strength,
-                    "weakness": insight.weakness,
-                    "opportunity": insight.opportunity,
-                    "threat": insight.threat
+                    "focus_zone": insight.focus_zone if insight.focus_zone else [],
+                    "steady_zone": insight.steady_zone if insight.steady_zone else [],
+                    "edge_zone": insight.edge_zone if insight.edge_zone else [],
+                    "xp_points": insight.xp_points,
+                    "accuracy": insight.accuracy
                 },
+                # Legacy SWOT fields (for backward compatibility, if needed)
+                "legacy_swot": {
+                    "strength": insight.strength if insight.strength else None,
+                    "weakness": insight.weakness if insight.weakness else None,
+                    "opportunity": insight.opportunity if insight.opportunity else None,
+                    "threat": insight.threat if insight.threat else None
+                } if (insight.strength or insight.weakness) else None,
                 "created_at": insight.created_at.isoformat(),
                 "updated_at": insight.updated_at.isoformat()
             })

@@ -1,6 +1,7 @@
 """
 Insight Generation Module
-Handles automatic generation of SWOT analysis insights for completed tutoring sessions.
+Handles automatic generation of BoostMe insights for completed tutoring sessions.
+Now uses TutorAgent's new BoostMe insights (3 zones + XP + Accuracy).
 """
 
 import logging
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 
 class InsightGenerator:
     """
-    Handles automatic generation of SWOT insights for tutoring sessions.
+    Handles automatic generation of BoostMe insights for tutoring sessions.
+    Now delegates to TutorAgent for new insights format.
     """
     
     def __init__(self):
@@ -24,7 +26,13 @@ class InsightGenerator:
     
     def generate_session_insights(self, session: ChatSession) -> Optional[SessionInsight]:
         """
-        Generate SWOT insights for a completed tutoring session.
+        Generate BoostMe insights for a completed tutoring session.
+        Uses TutorAgent's _generate_session_insights() which creates:
+        - focus_zone (weak areas)
+        - steady_zone (strong areas)
+        - edge_zone (growth potential)
+        - xp_points (count of answered questions)
+        - accuracy (percentage of correct answers)
         
         Args:
             session: The ChatSession object to analyze
@@ -35,63 +43,32 @@ class InsightGenerator:
         try:
             # Check if insights already exist for this session
             if hasattr(session, 'insight') and session.insight:
-                logger.info(f"Insights already exist for session {session.id}")
-                return session.insight
+                existing_insight = session.insight
+                
+                # Check if BoostMe fields are populated
+                if existing_insight.focus_zone or existing_insight.steady_zone or existing_insight.edge_zone:
+                    logger.info(f"BoostMe insights already exist for session {session.id}")
+                    return existing_insight
+                else:
+                    logger.info(f"Found old SWOT insights for session {session.id}, regenerating with BoostMe format")
+                    # Continue to regenerate with new format
             
-            # Get Q&A pairs from the session
-            qa_pairs = self._extract_qa_pairs(session)
+            # Use TutorAgent to generate new BoostMe insights
+            from .agent_flow import TutorAgent
             
-            # Check if we have at least 2 Q&A pairs for meaningful analysis
-            if len(qa_pairs) < 2:
-                logger.warning(f"Insufficient Q&A pairs for session {session.id}: found {len(qa_pairs)}, need at least 2")
-                return None
+            agent = TutorAgent(session)
+            insight = agent._generate_session_insights()
             
-            # Create insight record with pending status
-            # Create insight record with placeholder SWOT fields so DB constraints are satisfied
-            insight = SessionInsight.objects.create(
-                session=session,
-                user=session.user,
-                document=self._get_session_document(session),
-                strength='',
-                weakness='',
-                opportunity='',
-                threat='',
-                total_qa_pairs=len(qa_pairs),
-                session_duration_minutes=self._calculate_session_duration(session),
-                status='processing'
-            )
-            
-            try:
-                # Generate SWOT analysis using Gemini (HTTP client)
-                swot_analysis = self._generate_swot_analysis(qa_pairs, session)
-
-                # Update insight with generated analysis
-                insight.strength = swot_analysis.get('strength', '')
-                insight.weakness = swot_analysis.get('weakness', '')
-                insight.opportunity = swot_analysis.get('opportunity', '')
-                insight.threat = swot_analysis.get('threat', '')
-                insight.status = 'completed'
-                insight.save()
-
-                logger.info(f"Successfully generated insights for session {session.id}")
+            if insight:
+                logger.info(f"Successfully generated BoostMe insights for session {session.id}")
+                logger.info(f"  XP: {insight.xp_points}, Accuracy: {insight.accuracy}%")
                 return insight
-
-            except Exception as e:
-                # Mark as failed if generation fails
-                insight.status = 'failed'
-                insight.save()
-                logger.error(f"Failed to generate insights for session {session.id}: {str(e)}")
-                sentry_sdk.capture_exception(e, extras={
-                    "component": "insight_generator",
-                    "method": "generate_session_insights",
-                    "session_id": str(session.id),
-                    "qa_pairs_count": len(qa_pairs)
-                })
-                # Re-raise so the outer exception handler can capture and return None
-                raise
+            else:
+                logger.warning(f"Failed to generate insights for session {session.id} - not enough data")
+                return None
                 
         except Exception as e:
-            logger.error(f"Error creating insight record for session {session.id}: {str(e)}")
+            logger.error(f"Error generating insight for session {session.id}: {str(e)}")
             sentry_sdk.capture_exception(e, extras={
                 "component": "insight_generator",
                 "method": "generate_session_insights",
@@ -99,35 +76,29 @@ class InsightGenerator:
             })
             return None
     
+    # Legacy helper methods kept for backward compatibility if needed elsewhere
     def _extract_qa_pairs(self, session: ChatSession) -> list:
         """Extract question-answer pairs from session messages."""
         messages = session.messages.all().order_by('created_at')
         qa_pairs = []
         
         current_question = None
-        current_answers = []  # Collect multiple user messages as one answer
+        current_answers = []
         
         for message in messages:
             if message.is_user_message:
-                # User message (answer to previous question)
                 if current_question:
                     current_answers.append(message.content)
-                # If no current question, this might be the first user message - skip
             else:
-                # AI message (question)
                 if current_question and current_answers:
-                    # Save the previous Q&A pair
                     combined_answer = " ".join(current_answers)
                     qa_pairs.append({
                         'question': current_question,
                         'answer': combined_answer
                     })
                     current_answers = []
-                
-                # Set new question
                 current_question = message.content
         
-        # Handle the last Q&A pair if it exists
         if current_question and current_answers:
             combined_answer = " ".join(current_answers)
             qa_pairs.append({

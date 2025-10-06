@@ -56,6 +56,7 @@ class ChatSession(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     is_active = models.BooleanField(default=True)
+    language = models.CharField(max_length=16, default="tanglish", help_text="Language preference: tanglish or english")
     
     class Meta:
         ordering = ['-updated_at']
@@ -93,6 +94,9 @@ class ChatMessage(models.Model):
     response_time_ms = models.IntegerField(null=True, blank=True)  # Time taken to generate response
     token_count = models.IntegerField(null=True, blank=True)  # Approximate token count
     
+    # New fields for Tanglish agent flow
+    classifier_token = models.CharField(max_length=32, null=True, blank=True, help_text="Intent classifier result: DIRECT_ANSWER, MIXED, or RETURN_QUESTION")
+    
     class Meta:
         ordering = ['created_at']
     
@@ -104,18 +108,27 @@ class ChatMessage(models.Model):
 
 class SessionInsight(models.Model):
     """
-    Model to store SWOT analysis insights for completed tutoring sessions
+    Model to store BoostMe insights for completed tutoring sessions
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     session = models.OneToOneField(ChatSession, on_delete=models.CASCADE, related_name='insight')
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='session_insights')
     document = models.ForeignKey(Document, on_delete=models.CASCADE, related_name='session_insights', null=True, blank=True)
     
-    # SWOT Analysis Fields
-    strength = models.TextField(help_text="Student's strengths identified from the session")
-    weakness = models.TextField(help_text="Areas where student needs improvement")
-    opportunity = models.TextField(help_text="Learning opportunities for the student")
-    threat = models.TextField(help_text="Potential challenges or obstacles")
+    # BoostMe Insights Fields (3 Zones)
+    focus_zone = models.JSONField(null=True, blank=True, help_text="Array of 2 Tanglish points - low understanding/weak areas")
+    steady_zone = models.JSONField(null=True, blank=True, help_text="Array of 2 Tanglish points - high clarity/strong areas")
+    edge_zone = models.JSONField(null=True, blank=True, help_text="Array of 2 Tanglish points - potential improvement/growth areas")
+    
+    # Performance Metrics
+    xp_points = models.IntegerField(default=0, help_text="Total XP earned (1 XP per answered question)")
+    accuracy = models.FloatField(null=True, blank=True, help_text="Percentage accuracy (0-100) based on correct answers")
+    
+    # Legacy SWOT Fields (deprecated but kept for migration compatibility)
+    strength = models.TextField(blank=True, default='', help_text="DEPRECATED: Use steady_zone instead")
+    weakness = models.TextField(blank=True, default='', help_text="DEPRECATED: Use focus_zone instead")
+    opportunity = models.TextField(blank=True, default='', help_text="DEPRECATED: Use edge_zone instead")
+    threat = models.TextField(blank=True, default='', help_text="DEPRECATED: No longer used")
     
     # Session Metadata
     total_qa_pairs = models.IntegerField(default=0, help_text="Total question-answer pairs in the session")
@@ -216,3 +229,92 @@ class TutoringQuestionBatch(models.Model):
     def has_more_questions(self):
         """Check if there are more questions available"""
         return self.current_question_index < len(self.questions) - 1
+
+
+class QuestionItem(models.Model):
+    """
+    Model to store individual structured questions with archetype metadata.
+    Extends TutoringQuestionBatch for the new Tanglish agent flow.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.ForeignKey(ChatSession, on_delete=models.CASCADE, related_name='question_items')
+    batch = models.ForeignKey(TutoringQuestionBatch, on_delete=models.CASCADE, null=True, blank=True, related_name='structured_questions')
+    
+    # Question metadata from spec
+    question_id = models.CharField(max_length=64, help_text="Auto-generated question ID")
+    archetype = models.CharField(max_length=64, choices=[
+        ('Concept Unfold', 'Concept Unfold'),
+        ('Critical Reversal', 'Critical Reversal'),
+        ('Application Sprint', 'Application Sprint'),
+        ('Explainer Role', 'Explainer Role'),
+        ('Scenario Repair', 'Scenario Repair'),
+        ('Experimental Thinking', 'Experimental Thinking'),
+        ('Debate Card', 'Debate Card'),
+    ], help_text="Question archetype from spec")
+    question_text = models.TextField(help_text="The Tanglish question text")
+    difficulty = models.CharField(max_length=16, choices=[
+        ('easy', 'Easy'),
+        ('medium', 'Medium'),
+        ('hard', 'Hard'),
+    ])
+    expected_answer = models.TextField(help_text="Expected answer or key concepts")
+    order = models.IntegerField(default=0, help_text="Question order in sequence")
+    asked = models.BooleanField(default=False, help_text="Whether question has been asked")
+    
+    # Question selection scoring
+    topic_diversity_score = models.FloatField(default=0.0)
+    cognitive_variety_score = models.FloatField(default=0.0)
+    difficulty_progression_score = models.FloatField(default=0.0)
+    recency_penalty = models.FloatField(default=0.0)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['order', 'created_at']
+        verbose_name = "Question Item"
+        verbose_name_plural = "Question Items"
+    
+    def __str__(self):
+        return f"Q{self.order}: {self.archetype} - {self.question_text[:50]}..."
+    
+    def compute_question_score(self):
+        """Compute selection score using the formula from spec"""
+        score = (0.45 * self.topic_diversity_score + 
+                 0.30 * self.cognitive_variety_score + 
+                 0.20 * self.difficulty_progression_score - 
+                 0.05 * self.recency_penalty)
+        return score
+
+
+class EvaluatorResult(models.Model):
+    """
+    Model to store answer evaluation results with XP, score, and Tanglish feedback.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    message = models.OneToOneField(ChatMessage, on_delete=models.CASCADE, related_name='evaluation')
+    question = models.ForeignKey(QuestionItem, on_delete=models.SET_NULL, null=True, blank=True, related_name='evaluations')
+    
+    # Evaluation results from Gemini judge
+    raw_json = models.JSONField(help_text="Raw JSON response from evaluator")
+    score = models.FloatField(help_text="Score between 0.0 and 1.0")
+    correct = models.BooleanField(help_text="Whether answer is correct (score >= 0.75)")
+    xp = models.IntegerField(default=0, help_text="XP points awarded (1-100)")
+    explanation = models.TextField(help_text="Tanglish explanation of evaluation")
+    confidence = models.FloatField(help_text="Evaluator confidence (0.0-1.0)")
+    followup_action = models.CharField(max_length=32, choices=[
+        ('none', 'None'),
+        ('give_hint', 'Give Hint'),
+        ('ask_clarification', 'Ask Clarification'),
+        ('show_solution', 'Show Solution'),
+    ], default='none')
+    return_question_answer = models.TextField(blank=True, help_text="Tanglish hint or correction to send to student")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Evaluator Result"
+        verbose_name_plural = "Evaluator Results"
+    
+    def __str__(self):
+        return f"Eval: {self.score:.2f} ({self.xp}XP) - {self.explanation[:50]}..."

@@ -8,6 +8,10 @@ from .views import (
     TutoringSessionEndView, TutoringSessionDetailView,
     SessionInsightsView, UserSessionsListView
 )
+from .agent import (
+    AgentSessionStartView, AgentRespondView, 
+    AgentSessionStatusView, AgentLanguageToggleView
+)
 
 urlpatterns = [
     # Authentication URLs
@@ -37,4 +41,10 @@ urlpatterns = [
     # Insights URLs
     path('sessions/', UserSessionsListView.as_view(), name='user_sessions'),
     path('sessions/<uuid:session_id>/insights/', SessionInsightsView.as_view(), name='session_insights'),
+    
+    # NEW: Tanglish Agent URLs (implements spec flow)
+    path('agent/session/start/', AgentSessionStartView.as_view(), name='agent_session_start'),
+    path('agent/session/<uuid:session_id>/respond/', AgentRespondView.as_view(), name='agent_respond'),
+    path('agent/session/<uuid:session_id>/status/', AgentSessionStatusView.as_view(), name='agent_status'),
+    path('agent/session/<uuid:session_id>/language/', AgentLanguageToggleView.as_view(), name='agent_language_toggle'),
 ]
