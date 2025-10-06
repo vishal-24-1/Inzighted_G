@@ -495,6 +495,458 @@ class GeminiLLMClient:
         """
         token_list = self.tokenize_texts([text])[0]
         return len(token_list)
+    
+    # ============================================================
+    # NEW METHODS FOR TANGLISH AGENT FLOW
+    # ============================================================
+    
+    def classify_intent(self, user_message: str) -> str:
+        """
+        Classify user intent using Gemini with exact system prompt from spec.
+        Returns one token: DIRECT_ANSWER, MIXED, or RETURN_QUESTION.
+        Falls back to deterministic rule on API failure.
+        
+        Args:
+            user_message: The user's message to classify
+            
+        Returns:
+            Intent token string
+        """
+        from .tanglish_prompts import INTENT_CLASSIFIER_SYSTEM_PROMPT, fallback_intent_classifier
+        
+        try:
+            # Build prompt
+            prompt = f"{INTENT_CLASSIFIER_SYSTEM_PROMPT}\n\nUSER_MESSAGE: {user_message}\n\nClassify:"
+            
+            print(f"[CLASSIFIER] Prompt: {prompt[:200]}...")
+            
+            # Call Gemini with short response
+            response = self.generate_response(prompt, max_tokens=10)
+            
+            print(f"[CLASSIFIER] Gemini raw response: '{response}'")
+            
+            if not response or response.startswith("Error:"):
+                print(f"[CLASSIFIER] Gemini failed, using fallback")
+                return fallback_intent_classifier(user_message)
+            
+            # Parse first token
+            token = response.strip().split()[0].upper()
+            
+            print(f"[CLASSIFIER] Parsed token: '{token}'")
+            
+            # Validate token
+            valid_tokens = ['DIRECT_ANSWER', 'MIXED', 'RETURN_QUESTION']
+            if token in valid_tokens:
+                print(f"[CLASSIFIER] ✅ Valid token: {token}")
+                return token
+            else:
+                print(f"[CLASSIFIER] ⚠️ Invalid token '{token}', using fallback")
+                return fallback_intent_classifier(user_message)
+                
+        except Exception as e:
+            logger.error(f"Error in classify_intent: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "gemini_client",
+                "method": "classify_intent"
+            })
+            return fallback_intent_classifier(user_message)
+    
+    def generate_questions_structured(self, context: str, total_questions: int = 10) -> list:
+        """
+        Generate structured questions using exact system prompt from spec.
+        Returns list of question dictionaries with archetype, difficulty, etc.
+        
+        Args:
+            context: Document context to generate questions from
+            total_questions: Number of questions to generate
+            
+        Returns:
+            List of question dicts matching spec format
+        """
+        from .tanglish_prompts import build_question_generation_prompt
+        import json
+        
+        try:
+            # Build prompt with context
+            prompt = build_question_generation_prompt(context, total_questions)
+            
+            # Call Gemini
+            logger.info(f"Generating {total_questions} structured questions...")
+            response = self.generate_response(prompt, max_tokens=3000)
+            
+            if response.startswith("Error:"):
+                raise ValueError(f"LLM error: {response}")
+            
+            # Parse JSON response
+            try:
+                # Clean response
+                cleaned = response.strip()
+                if cleaned.startswith('```json'):
+                    cleaned = cleaned[7:]
+                if cleaned.endswith('```'):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+                
+                questions = json.loads(cleaned)
+                
+                if not isinstance(questions, list):
+                    raise ValueError("Response is not a JSON array")
+                
+                # Validate structure
+                required_keys = ['question_id', 'archetype', 'question_text', 'difficulty', 'expected_answer']
+                valid_questions = []
+                
+                for q in questions:
+                    if isinstance(q, dict) and all(k in q for k in required_keys):
+                        valid_questions.append(q)
+                
+                if len(valid_questions) < total_questions // 2:
+                    raise ValueError(f"Only got {len(valid_questions)} valid questions")
+                
+                logger.info(f"Successfully generated {len(valid_questions)} structured questions")
+                return valid_questions[:total_questions]
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse question JSON: {e}")
+                logger.debug(f"Raw response: {response[:500]}")
+                
+                # Fallback: return minimal structure
+                return [{
+                    "question_id": f"q_fallback_{i}",
+                    "archetype": "Concept Unfold",
+                    "question_text": f"Question {i+1} generation failed. Please try again.",
+                    "difficulty": "medium",
+                    "expected_answer": "N/A"
+                } for i in range(min(3, total_questions))]
+                
+        except Exception as e:
+            logger.error(f"Error in generate_questions_structured: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "gemini_client",
+                "method": "generate_questions_structured"
+            })
+            return []
+    
+    def evaluate_answer(self, context: str, expected_answer: str, student_answer: str) -> dict:
+        """
+        Evaluate student answer using Gemini Judge with exact system prompt from spec.
+        Returns evaluation dict with score, XP, explanation, etc.
+        
+        Args:
+            context: Question context
+            expected_answer: Expected answer
+            student_answer: Student's answer
+            
+        Returns:
+            Evaluation dict matching spec format
+        """
+        from .tanglish_prompts import build_evaluation_prompt
+        import json
+        
+        try:
+            # Build evaluation prompt
+            prompt = build_evaluation_prompt(context, expected_answer, student_answer)
+            
+            # Call Gemini
+            logger.info("Evaluating student answer...")
+            response = self.generate_response(prompt, max_tokens=500)
+            
+            if response.startswith("Error:"):
+                raise ValueError(f"LLM error: {response}")
+            
+            # Parse JSON response
+            try:
+                # Clean response
+                cleaned = response.strip()
+                if cleaned.startswith('```json'):
+                    cleaned = cleaned[7:]
+                if cleaned.endswith('```'):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+                
+                evaluation = json.loads(cleaned)
+                
+                # Validate required keys
+                required_keys = ['score', 'correct', 'explanation', 'confidence', 'followup_action']
+                if not all(k in evaluation for k in required_keys):
+                    raise ValueError("Missing required keys in evaluation")
+                
+                # Ensure XP is present and valid
+                if 'XP' not in evaluation or not isinstance(evaluation['XP'], (int, float)):
+                    # Calculate XP from score
+                    score = float(evaluation['score'])
+                    if score >= 0.9:
+                        evaluation['XP'] = int(80 + (score - 0.9) * 200)
+                    elif score >= 0.75:
+                        evaluation['XP'] = int(60 + (score - 0.75) * 133)
+                    elif score >= 0.5:
+                        evaluation['XP'] = int(40 + (score - 0.5) * 80)
+                    elif score >= 0.25:
+                        evaluation['XP'] = int(20 + (score - 0.25) * 80)
+                    else:
+                        evaluation['XP'] = max(1, int(score * 80))
+                
+                # Ensure return_question_answer exists
+                if 'return_question_answer' not in evaluation:
+                    evaluation['return_question_answer'] = ""
+                
+                logger.info(f"Answer evaluated: score={evaluation['score']}, XP={evaluation['XP']}")
+                return evaluation
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse evaluation JSON: {e}")
+                logger.debug(f"Raw response: {response[:500]}")
+                
+                # Fallback: return safe default evaluation
+                return {
+                    "XP": 20,
+                    "correct": False,
+                    "score": 0.5,
+                    "explanation": "Unable to fully evaluate. Partial credit given.",
+                    "confidence": 0.3,
+                    "followup_action": "none",
+                    "return_question_answer": ""
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in evaluate_answer: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "gemini_client",
+                "method": "evaluate_answer"
+            })
+            return {
+                "XP": 10,
+                "correct": False,
+                "score": 0.0,
+                "explanation": "Evaluation failed. Try again.",
+                "confidence": 0.0,
+                "followup_action": "none",
+                "return_question_answer": ""
+            }
+    
+    def generate_insights(self, qa_records: list) -> dict:
+        """
+        Generate SWOT insights from tutoring session QA records.
+        DEPRECATED: Use generate_boostme_insights() instead.
+        Kept for backward compatibility.
+        
+        Args:
+            qa_records: List of QA dicts with question, answer, score, xp
+            
+        Returns:
+            Insights dict with strength, weakness, opportunity, threat
+        """
+        from .tanglish_prompts import build_insights_prompt
+        import json
+        
+        try:
+            # Build insights prompt
+            prompt = build_insights_prompt(qa_records, [])
+            
+            # Call Gemini
+            logger.info("Generating session insights...")
+            response = self.generate_response(prompt, max_tokens=800)
+            
+            if response.startswith("Error:"):
+                raise ValueError(f"LLM error: {response}")
+            
+            # Parse JSON response
+            try:
+                # Clean response
+                cleaned = response.strip()
+                if cleaned.startswith('```json'):
+                    cleaned = cleaned[7:]
+                if cleaned.endswith('```'):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+                
+                insights = json.loads(cleaned)
+                
+                # Validate required keys
+                required_keys = ['strength', 'weakness', 'opportunity', 'threat']
+                if not all(k in insights for k in required_keys):
+                    raise ValueError("Missing required keys in insights")
+                
+                logger.info("Session insights generated successfully")
+                return insights
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse insights JSON: {e}")
+                logger.debug(f"Raw response: {response[:500]}")
+                
+                # Fallback: return generic insights
+                return {
+                    "strength": "Participated in tutoring session.",
+                    "weakness": "Analysis unavailable.",
+                    "opportunity": "Continue practicing regularly.",
+                    "threat": "N/A"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error in generate_insights: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "gemini_client",
+                "method": "generate_insights"
+            })
+            return {
+                "strength": "Session completed.",
+                "weakness": "Unable to analyze.",
+                "opportunity": "Try again.",
+                "threat": "N/A"
+            }
+    
+    def generate_boostme_insights(self, qa_records: list) -> dict:
+        """
+        Generate BoostMe insights (3 zones) from tutoring session QA records.
+        Returns focus_zone, steady_zone, edge_zone as arrays of 2 Tanglish points each.
+        
+        Args:
+            qa_records: List of QA dicts with question, answer, score, xp
+            
+        Returns:
+            Dict with focus_zone, steady_zone, edge_zone (each is array of 2 strings)
+        """
+        import json
+        
+        # System prompt for BoostMe insights
+        system_prompt = """You are an insights-generator for InzightEd-G for Tamil learners. Output JSON only (no commentary).
+Language: Tanglish (Tamil in Latin letters). Keep each point concise (<= 12 words).
+Produce three zones based on the student's performance. Each zone must be an array of exactly two short points (strings).
+
+Rules:
+1. focus_zone: Low understanding / weak areas where student needs improvement (similar to weakness)
+2. steady_zone: High clarity / strong areas where student performs well (similar to strengths)
+3. edge_zone: Potential improvement / growth areas - not weak but not completely strong (similar to opportunities)
+
+Output ONLY this JSON structure (no markdown, no commentary):
+{
+  "focus_zone": ["point1", "point2"],
+  "steady_zone": ["point1", "point2"],
+  "edge_zone": ["point1", "point2"]
+}
+
+Each point should be in Tanglish and <= 12 words."""
+        
+        try:
+            # Build context from QA records
+            qa_summary = "\n".join([
+                f"Q: {qa.get('question', 'N/A')[:100]}\n"
+                f"A: {qa.get('answer', 'N/A')[:100]}\n"
+                f"Score: {qa.get('score', 0)}, XP: {qa.get('xp', 0)}\n"
+                for qa in qa_records[:10]  # Limit to first 10 QAs
+            ])
+            
+            prompt = f"""{system_prompt}
+
+Student's Question-Answer Performance:
+{qa_summary}
+
+Generate BoostMe insights in JSON:"""
+            
+            # Call Gemini
+            logger.info("Generating BoostMe insights...")
+            response = self.generate_response(prompt, max_tokens=600)
+            
+            if response.startswith("Error:"):
+                raise ValueError(f"LLM error: {response}")
+            
+            # Parse JSON response
+            try:
+                # Clean response
+                cleaned = response.strip()
+                if cleaned.startswith('```json'):
+                    cleaned = cleaned[7:]
+                if cleaned.endswith('```'):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+                
+                insights = json.loads(cleaned)
+                
+                # Validate structure
+                required_keys = ['focus_zone', 'steady_zone', 'edge_zone']
+                if not all(k in insights for k in required_keys):
+                    raise ValueError("Missing required zone keys")
+                
+                # Validate each zone is an array with 2 items
+                for zone_key in required_keys:
+                    if not isinstance(insights[zone_key], list) or len(insights[zone_key]) != 2:
+                        raise ValueError(f"{zone_key} must be array of 2 strings")
+                
+                logger.info("BoostMe insights generated successfully")
+                return insights
+                
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.error(f"Failed to parse BoostMe insights JSON: {e}")
+                logger.debug(f"Raw response: {response[:500]}")
+                
+                # Fallback: return generic Tanglish insights
+                return self._generate_fallback_boostme_insights(qa_records)
+                
+        except Exception as e:
+            logger.error(f"Error in generate_boostme_insights: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "gemini_client",
+                "method": "generate_boostme_insights"
+            })
+            return self._generate_fallback_boostme_insights(qa_records)
+    
+    def _generate_fallback_boostme_insights(self, qa_records: list) -> dict:
+        """
+        Generate deterministic fallback BoostMe insights based on QA performance.
+        
+        Args:
+            qa_records: List of QA dicts with question, answer, score, xp
+            
+        Returns:
+            Dict with focus_zone, steady_zone, edge_zone arrays
+        """
+        if not qa_records:
+            return {
+                "focus_zone": ["Session data unavailable", "Try answering more questions"],
+                "steady_zone": ["Session participation good", "Keep learning regularly"],
+                "edge_zone": ["Practice consistency venum", "More topics explore pannunga"]
+            }
+        
+        # Calculate simple statistics
+        total = len(qa_records)
+        scores = [qa.get('score', 0) for qa in qa_records]
+        avg_score = sum(scores) / total if total > 0 else 0
+        high_scores = sum(1 for s in scores if s >= 0.75)
+        low_scores = sum(1 for s in scores if s < 0.5)
+        
+        # Generate insights based on performance
+        if avg_score >= 0.75:
+            steady_zone = [
+                f"Concept understanding romba nalla iruku",
+                f"{high_scores}/{total} questions correct ah answer panninga"
+            ]
+        else:
+            steady_zone = [
+                "Session la participate panninga",
+                "努力 continuous ah maintain pannunga"
+            ]
+        
+        if low_scores > total // 2:
+            focus_zone = [
+                f"Basics practice venum - {low_scores} questions weak",
+                "Core concepts marupadiyum revise pannunga"
+            ]
+        else:
+            focus_zone = [
+                "Some topics la confusion iruku",
+                "Difficult questions ku extra attention venum"
+            ]
+        
+        edge_zone = [
+            "Apply concepts to new scenarios try pannunga",
+            "Practice speed improve panna vendiyathu"
+        ]
+        
+        return {
+            "focus_zone": focus_zone,
+            "steady_zone": steady_zone,
+            "edge_zone": edge_zone
+        }
 
 # Module-level instance
 gemini_client = GeminiLLMClient()

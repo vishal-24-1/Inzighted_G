@@ -155,14 +155,33 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
         };
         setMessages(prev => [...prev, completionMessage]);
       } else {
-        // Add the next question
-        const nextQuestion: Message = {
-          id: response.data.next_question.id,
-          text: response.data.next_question.text,
-          isUser: false,
-          timestamp: new Date(response.data.next_question.created_at)
-        };
-        setMessages(prev => [...prev, nextQuestion]);
+        // If the agent provided feedback (reply), show it immediately
+        const itemsToAppend: Message[] = [];
+
+        if (response.data.feedback && response.data.feedback.text) {
+          const feedbackMessage: Message = {
+            id: response.data.feedback.id || (Date.now() + 2).toString(),
+            text: response.data.feedback.text,
+            isUser: false,
+            timestamp: new Date()
+          };
+          itemsToAppend.push(feedbackMessage);
+        }
+
+        // Add the next question if present
+        if (response.data.next_question && response.data.next_question.text) {
+          const nextQuestion: Message = {
+            id: response.data.next_question.id,
+            text: response.data.next_question.text,
+            isUser: false,
+            timestamp: new Date(response.data.next_question.created_at)
+          };
+          itemsToAppend.push(nextQuestion);
+        }
+
+        if (itemsToAppend.length > 0) {
+          setMessages(prev => [...prev, ...itemsToAppend]);
+        }
       }
     } catch (error: any) {
       const errorMessage: Message = {

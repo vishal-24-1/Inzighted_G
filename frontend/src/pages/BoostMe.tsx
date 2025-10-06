@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { insightsAPI } from '../utils/api';
-import { Menu, SquarePen as HomeIcon, ShieldCheck, AlertTriangle, TrendingUp, Zap } from 'lucide-react';
+import { Menu, SquarePen as ChatIcon, Target, CheckCircle2, TrendingUp, Award, Percent } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import UserProfilePopup from '../components/UserProfilePopup';
 
@@ -17,10 +17,11 @@ interface Session {
 }
 
 interface Insights {
-  strength: string | string[];
-  weakness: string | string[];
-  opportunity: string | string[];
-  threat: string | string[];
+  focus_zone: string[];
+  steady_zone: string[];
+  edge_zone: string[];
+  xp_points: number;
+  accuracy: number;
 }
 
 interface SessionInsights {
@@ -83,34 +84,21 @@ const BoostMe: React.FC = () => {
     }
   };
 
-  // Parse SWOT fields which may arrive as stringified Python lists like "['a','b']"
-  const parseSwotField = (value: any): string | string[] => {
-    if (!value && value !== 0) return '';
+  // Parse zone fields which should arrive as arrays
+  const parseZoneField = (value: any): string[] => {
+    if (!value) return [];
     if (Array.isArray(value)) return value;
-    if (typeof value !== 'string') return String(value);
-
-    const s = value.trim();
-
-    // If looks like a list (starts with [ and ends with ]) try to parse
-    if (s.startsWith('[') && s.endsWith(']')) {
-      // Try valid JSON first (in case backend returned JSON)
+    if (typeof value === 'string') {
+      // Try to parse if it's a stringified array
       try {
-        return JSON.parse(s);
+        const parsed = JSON.parse(value);
+        if (Array.isArray(parsed)) return parsed;
       } catch (e) {
-        // Convert Python-style single quotes to double quotes and try again
-        try {
-          const jsonLike = s.replace(/'/g, '"');
-          return JSON.parse(jsonLike);
-        } catch (_) {
-          // Fallback: split on commas and strip quotes
-          const inner = s.slice(1, -1);
-          const parts = inner.split(/\s*,\s*/).map(p => p.replace(/^['"]|['"]$/g, '').trim()).filter(Boolean);
-          return parts;
-        }
+        // Return as single-item array if parsing fails
+        return [value];
       }
     }
-
-    return s;
+    return [];
   };
 
   const loadInsights = async (sessionId: string) => {
@@ -120,15 +108,16 @@ const BoostMe: React.FC = () => {
     try {
       const response = await insightsAPI.getSessionInsights(sessionId);
 
-      // Normalize insight fields so the UI can render arrays cleanly
+      // Normalize insight fields
       const data = response.data as SessionInsights;
       const parsed = {
         ...data,
         insights: {
-          strength: parseSwotField(data.insights?.strength),
-          weakness: parseSwotField(data.insights?.weakness),
-          opportunity: parseSwotField(data.insights?.opportunity),
-          threat: parseSwotField(data.insights?.threat),
+          focus_zone: parseZoneField(data.insights?.focus_zone),
+          steady_zone: parseZoneField(data.insights?.steady_zone),
+          edge_zone: parseZoneField(data.insights?.edge_zone),
+          xp_points: data.insights?.xp_points || 0,
+          accuracy: data.insights?.accuracy || 0,
         },
       } as SessionInsights;
 
@@ -181,35 +170,32 @@ const BoostMe: React.FC = () => {
     }
   };
 
-  const swotCards = insights ? [
+  const boostMeCards = insights ? [
     {
-      type: 'Strength',
-      content: insights.insights.strength,
-      color: '#28a745',
-      icon: <ShieldCheck size={20} className="text-white" />
-    },
-    {
-      type: 'Weakness',
-      content: insights.insights.weakness,
+      type: 'Focus Zone',
+      description: '🎯 Areas to improve',
+      content: insights.insights.focus_zone,
       color: '#dc3545',
-      icon: <AlertTriangle size={20} className="text-white" />
+      icon: <Target size={20} className="text-white" />
     },
     {
-      type: 'Opportunity',
-      content: insights.insights.opportunity,
+      type: 'Steady Zone',
+      description: '✅ Strong areas',
+      content: insights.insights.steady_zone,
+      color: '#28a745',
+      icon: <CheckCircle2 size={20} className="text-white" />
+    },
+    {
+      type: 'Edge Zone',
+      description: '⚡ Growth potential',
+      content: insights.insights.edge_zone,
       color: '#007bff',
       icon: <TrendingUp size={20} className="text-white" />
-    },
-    {
-      type: 'Threat',
-      content: insights.insights.threat,
-      color: '#fd7e14',
-      icon: <Zap size={20} className="text-white" />
     }
   ] : [];
 
   // Guard to avoid division by zero when computing carousel widths
-  const cardCount = Math.max(swotCards.length, 1);
+  const cardCount = Math.max(boostMeCards.length, 1);
 
   return (
     <div className="w-full min-h-screen bg-white text-gray-900 p-4 pb-24 flex flex-col overflow-x-hidden">
@@ -235,11 +221,12 @@ const BoostMe: React.FC = () => {
         </div>
 
         <button
-          className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 md:hidden"
-          aria-label="Home"
-          onClick={() => navigate('/')}
+          className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          aria-label="New chat"
+          title="New chat"
+          onClick={() => navigate('/chat')}
         >
-          <HomeIcon size={18} className="text-blue-600" />
+          <ChatIcon size={18} className="text-blue-600" />
         </button>
       </header>
 
@@ -299,6 +286,7 @@ const BoostMe: React.FC = () => {
           </div>
         ) : insights ? (
           <div>
+            {/* Zone Cards Carousel */}
             <div className="overflow-hidden w-full">
               <div
                 className="flex transition-transform duration-300"
@@ -307,24 +295,27 @@ const BoostMe: React.FC = () => {
                 onTouchMove={onTouchMove}
                 onTouchEnd={onTouchEnd}
               >
-                {swotCards.map((card, index) => (
+                {boostMeCards.map((card, index) => (
                   <div key={index} className="py-4" style={{ width: `${100 / cardCount}%` }}>
                     <div className="bg-white rounded-lg p-4 h-full shadow-sm" style={{ border: `0.02rem solid ${card.color}` }}>
-                      <div className="flex items-center gap-3 mb-3">
+                      <div className="flex items-center gap-3 mb-2">
                         <div className="p-2 rounded-full" style={{ background: card.color }}>
                           {card.icon}
                         </div>
-                        <h3 className="text-lg font-semibold" style={{ color: card.color }}>{card.type}</h3>
+                        <div>
+                          <h3 className="text-lg font-semibold" style={{ color: card.color }}>{card.type}</h3>
+                          <p className="text-xs text-gray-500">{card.description}</p>
+                        </div>
                       </div>
                       <div className="text-sm text-gray-700 text-left">
-                        {Array.isArray(card.content) ? (
+                        {Array.isArray(card.content) && card.content.length > 0 ? (
                           <ul className="list-disc pl-5 space-y-2">
                             {card.content.map((item, idx) => (
                               <li key={idx}>{item}</li>
                             ))}
                           </ul>
                         ) : (
-                          <p>{card.content}</p>
+                          <p className="text-gray-500 italic">No insights available</p>
                         )}
                       </div>
                     </div>
@@ -335,17 +326,42 @@ const BoostMe: React.FC = () => {
 
             {/* Card Indicators */}
             <div className="flex items-center justify-center gap-2 mt-2">
-              {swotCards.map((_, index) => (
+              {boostMeCards.map((_, index) => (
                 <button
                   key={index}
                   onClick={() => setCurrentCardIndex(index)}
                   className={`h-2.5 ${currentCardIndex === index ? 'w-10 bg-blue-500' : 'w-2.5 bg-gray-200'} rounded-full transition-all`}
-                  aria-label={`View ${swotCards[index].type} card`}
+                  aria-label={`View ${boostMeCards[index].type} card`}
                 />
               ))}
             </div>
 
             <div className="text-xs text-gray-500 mt-3 text-center">← Swipe to explore insights →</div>
+
+            {/* XP and Accuracy Metrics */}
+            <div className="mt-6 grid grid-cols-2 gap-4">
+              {/* XP Points Card */}
+              <div className="bg-gradient-to-br from-purple-50 to-purple-100 rounded-lg p-4 shadow-sm border border-purple-200">
+                <div className="flex items-center justify-center mb-2">
+                  <Award size={24} className="text-purple-600" />
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-purple-700">{insights.insights.xp_points}</p>
+                  <p className="text-xs text-purple-600 font-medium">XP Points</p>
+                </div>
+              </div>
+
+              {/* Accuracy Card */}
+              <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg p-4 shadow-sm border border-green-200">
+                <div className="flex items-center justify-center mb-2">
+                  <Percent size={24} className="text-green-600" />
+                </div>
+                <div className="text-center">
+                  <p className="text-2xl font-bold text-green-700">{insights.insights.accuracy.toFixed(0)}%</p>
+                  <p className="text-xs text-green-600 font-medium">Accuracy</p>
+                </div>
+              </div>
+            </div>
           </div>
         ) : selectedSession ? (
           <div className="text-center py-8">
