@@ -10,3 +10,7 @@ venv/
 __pycache__/
 **/__pycache__/
 
+# Android/TWA keystore files (do not commit production keystores)
+inzighted-twa/android.keystore
+inzighted-twa/keystore.properties
+
