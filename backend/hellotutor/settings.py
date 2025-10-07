@@ -106,11 +106,13 @@ WSGI_APPLICATION = "hellotutor.wsgi.application"
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.postgresql",
-        "NAME": "inzightedg",
-        "USER": "inzightedb2c",
-        "PASSWORD": "b2c",
-        "HOST": "localhost",
-        "PORT":"5433",
+        # Read database configuration from environment for flexibility.
+        # Defaults preserve the previous hard-coded values for local development.
+        "NAME": os.environ.get("DB_NAME", "inzightedg"),
+        "USER": os.environ.get("DB_USER", "inzightedb2c"),
+        "PASSWORD": os.environ.get("DB_PASSWORD", "b2c"),
+        "HOST": os.environ.get("DB_HOST", "localhost"),
+        "PORT": os.environ.get("DB_PORT", "5433"),
     }
 }
 
