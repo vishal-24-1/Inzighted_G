@@ -25,7 +25,8 @@ logger = logging.getLogger(__name__)
 from django.conf import settings
 import time
 from google.oauth2 import id_token
-from google.auth.transport import requests
+from google.auth.transport import requests as google_requests
+import requests as http_requests
 
 # Utility: check Celery availability (ping workers)
 def is_celery_available(timeout: int = 2) -> bool:
@@ -123,7 +124,7 @@ class ProfileView(APIView):
 class GoogleAuthView(APIView):
     """
     API view to handle Google OAuth authentication.
-    Receives Google credential (ID token), verifies it, and returns JWT tokens.
+    Supports both ID token (OpenID Connect) and access token (OAuth 2.0) flows.
     """
     permission_classes = [AllowAny]
     
@@ -144,16 +145,16 @@ class GoogleAuthView(APIView):
                     status=status.HTTP_400_BAD_REQUEST
                 )
             
-            # Verify the Google token
+            # Try to verify as ID token first (OpenID Connect flow)
             try:
-                print(f"Verifying token with client ID: {settings.GOOGLE_OAUTH_CLIENT_ID[:20]}...")
+                print(f"Attempting to verify as ID token...")
                 idinfo = id_token.verify_oauth2_token(
                     credential, 
-                    requests.Request(), 
+                    google_requests.Request(), 
                     settings.GOOGLE_OAUTH_CLIENT_ID
                 )
                 
-                print(f"Token verified successfully")
+                print(f"ID token verified successfully")
                 print(f"Token info: {idinfo.keys()}")
                 
                 # Check if token is for our app
@@ -164,63 +165,90 @@ class GoogleAuthView(APIView):
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
-                # Extract user information
+                # Extract user information from ID token
                 email = idinfo.get('email')
                 name = idinfo.get('name', '')
                 google_id = idinfo.get('sub')
                 
-                print(f"User email: {email}, name: {name}")
+            except ValueError as e:
+                # Not an ID token, try as access token (OAuth 2.0 flow)
+                print(f"Not an ID token, trying as access token: {str(e)}")
                 
-                if not email:
-                    print("ERROR: No email in token")
+                try:
+                    # Use the access token to get user info from Google
+                    print(f"Fetching user info with access token...")
+                    response = http_requests.get(
+                        'https://www.googleapis.com/oauth2/v2/userinfo',
+                        headers={'Authorization': f'Bearer {credential}'},
+                        timeout=10
+                    )
+                    
+                    if response.status_code != 200:
+                        print(f"ERROR: Failed to fetch user info: {response.status_code} - {response.text}")
+                        return Response(
+                            {'error': 'Failed to verify access token'}, 
+                            status=status.HTTP_400_BAD_REQUEST
+                        )
+                    
+                    user_info = response.json()
+                    print(f"Access token verified, user info retrieved: {user_info.keys()}")
+                    
+                    # Extract user information from access token response
+                    email = user_info.get('email')
+                    name = user_info.get('name', '')
+                    google_id = user_info.get('id')
+                    
+                except Exception as access_token_error:
+                    print(f"ERROR: Access token verification failed: {str(access_token_error)}")
+                    sentry_sdk.capture_exception(access_token_error, extras={
+                        "component": "auth",
+                        "view": "GoogleAuthView",
+                        "error_type": "access_token_verification_failed"
+                    })
                     return Response(
-                        {'error': 'Email not provided by Google'}, 
+                        {'error': f'Invalid credential: {str(access_token_error)}'}, 
                         status=status.HTTP_400_BAD_REQUEST
                     )
-                
-                # Check if user exists, create if not
-                user, created = User.objects.get_or_create(
-                    email=email,
-                    defaults={
-                        'username': email.split('@')[0],
-                        'name': name,
-                        'google_id': google_id,
-                        'is_active': True,
-                    }
-                )
-                
-                print(f"User {'created' if created else 'found'}: {user.email}")
-                
-                # Update Google ID if user exists but doesn't have it
-                if not created and not user.google_id:
-                    user.google_id = google_id
-                    user.save()
-                    print(f"Updated Google ID for existing user")
-                
-                # Generate JWT tokens
-                refresh = RefreshToken.for_user(user)
-                
-                print(f"JWT tokens generated successfully")
-                
-                return Response({
-                    'user': UserProfileSerializer(user).data,
-                    'refresh': str(refresh),
-                    'access': str(refresh.access_token),
-                    'message': 'Login successful' if not created else 'Account created successfully'
-                })
-                
-            except ValueError as e:
-                # Invalid token
-                print(f"ERROR: Token verification failed: {str(e)}")
-                sentry_sdk.capture_exception(e, extras={
-                    "component": "auth",
-                    "view": "GoogleAuthView",
-                    "error_type": "token_verification_failed"
-                })
+            
+            print(f"User email: {email}, name: {name}")
+            
+            if not email:
+                print("ERROR: No email in token")
                 return Response(
-                    {'error': f'Invalid token: {str(e)}'}, 
+                    {'error': 'Email not provided by Google'}, 
                     status=status.HTTP_400_BAD_REQUEST
                 )
+            
+            # Check if user exists, create if not
+            user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    'username': email.split('@')[0],
+                    'name': name,
+                    'google_id': google_id,
+                    'is_active': True,
+                }
+            )
+            
+            print(f"User {'created' if created else 'found'}: {user.email}")
+            
+            # Update Google ID if user exists but doesn't have it
+            if not created and not user.google_id:
+                user.google_id = google_id
+                user.save()
+                print(f"Updated Google ID for existing user")
+            
+            # Generate JWT tokens
+            refresh = RefreshToken.for_user(user)
+            
+            print(f"JWT tokens generated successfully")
+            
+            return Response({
+                'user': UserProfileSerializer(user).data,
+                'refresh': str(refresh),
+                'access': str(refresh.access_token),
+                'message': 'Login successful' if not created else 'Account created successfully'
+            })
                 
         except Exception as e:
             print(f"ERROR: Unexpected error: {str(e)}")
