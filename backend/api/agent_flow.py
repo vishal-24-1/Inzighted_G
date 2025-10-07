@@ -484,9 +484,15 @@ class TutorAgent:
             rag_response = query_rag(self.user_id, user_message)
             logger.info(f"[RAG] Raw response length: {len(rag_response)} chars, preview: {rag_response[:100]}...")
             
-            # Check if RAG found nothing
-            if "I could not find" in rag_response or "I don't know" in rag_response:
-                logger.info("[RAG] No relevant content found, returning fallback message")
+            # Check if RAG returned general knowledge fallback (contains the note)
+            if "(Note: This answer is based on general knowledge" in rag_response:
+                logger.info("[RAG] Received general knowledge fallback response")
+                # Return as-is with encouragement
+                return f"{rag_response}\n\nNow, let's continue with the question."
+            
+            # Check if response contains error message
+            if "I could not find" in rag_response or "Error:" in rag_response:
+                logger.info("[RAG] Error or no content found, returning message")
                 return f"{rag_response}\n\nLet me know if you have other questions, or let's continue with the next question."
             
             # If RAG response is too long, summarize it in Tanglish style

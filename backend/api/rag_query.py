@@ -671,25 +671,77 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
     context = "\n".join([f"[{sid}#{ci}] {txt}" for sid, ci, txt in context_items])
 
     prompt_template = (
-        "You are a helpful assistant that MUST answer using ONLY the provided context.\n"
-        "Do NOT use any external knowledge or make assumptions beyond the context.\n"
-        "If the answer cannot be found in the context, respond exactly: 'I don't know based on the provided documents.'\n"
-        "Provide concise answers and include citations in the form [source_doc_id:chunk_index] for any facts drawn from the context.\n\n"
+        "You are a helpful assistant that MUST answer using ONLY the provided context below.\n"
+        "CRITICAL RULES:\n"
+        "- Do NOT use any external knowledge or make assumptions beyond the context.\n"
+        "- If the context does NOT contain information to answer the question, you MUST respond EXACTLY with: 'NO_ANSWER_IN_CONTEXT'\n"
+        "- Only provide an answer if you can directly find the information in the context.\n"
+        "- Do NOT try to infer, deduce, or piece together partial information.\n"
+        "- Provide concise answers with specific references to the context when available.\n\n"
         "CONTEXT:\n{context}\n\n"
         "QUESTION:\n{query}\n\n"
-        "Answer now."
+        "Answer now (or respond with 'NO_ANSWER_IN_CONTEXT' if the context doesn't contain the answer):"
     )
 
     augmented_prompt = prompt_template.format(context=context.strip(), query=query)
 
-    # 6. Call Gemini LLM
+    # 6. Call Gemini LLM with context
     try:
-        print("Calling Gemini LLM...")
+        print("Calling Gemini LLM with RAG context...")
         if not gemini_client.is_available():
             return "Error: Gemini LLM client is not available. Please check your LLM_API_KEY configuration."
         
         llm_response = gemini_client.generate_response(augmented_prompt, max_tokens=1000)
         print("Gemini LLM response received.")
+        print(f"LLM response: {llm_response[:200]}...")  # Debug log
+        
+        # Check if LLM couldn't answer from the context
+        # Multiple checks for various "I don't know" patterns
+        no_answer_indicators = [
+            "NO_ANSWER_IN_CONTEXT",
+            "I don't know based on the provided documents",
+            "I don't know based on provided documents",
+            "cannot be found in the context",
+            "not found in the context",
+            "no information in the context"
+        ]
+        
+        response_lower = llm_response.lower()
+        should_fallback = any(indicator.lower() in response_lower for indicator in no_answer_indicators)
+        
+        # Also fallback if response is suspiciously short or generic (likely means RAG chunks were irrelevant)
+        if len(llm_response.strip()) < 30 and not should_fallback:
+            print("Response too short, might be irrelevant context. Checking...")
+            should_fallback = True
+        
+        if should_fallback:
+            print("LLM couldn't answer from RAG context (detected no-answer indicator). Falling back to general knowledge...")
+            
+            # Use general knowledge fallback
+            fallback_prompt = (
+                "You are a helpful educational assistant. The user has asked a question but the specific content in their documents doesn't contain the answer.\n"
+                "Provide a helpful, educational answer based on your general knowledge. Keep the response concise and informative.\n"
+                "Mention that this answer is based on general knowledge since the specific information wasn't found in their documents.\n\n"
+                "QUESTION: {query}\n\n"
+                "Provide a helpful answer:"
+            )
+            
+            try:
+                fallback_response = gemini_client.generate_response(
+                    fallback_prompt.format(query=query), 
+                    max_tokens=800
+                )
+                
+                if fallback_response and not fallback_response.startswith("Error:"):
+                    print("General knowledge fallback successful.")
+                    return f"{fallback_response}\n\n(Note: This answer is based on general knowledge as the specific information wasn't found in your uploaded documents.)"
+                else:
+                    return llm_response  # Return original "I don't know" response
+                    
+            except Exception as fb_error:
+                print(f"Error in general knowledge fallback: {fb_error}")
+                return llm_response  # Return original response
+        
         return llm_response
         
     except Exception as e:
