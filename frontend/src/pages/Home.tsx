@@ -351,9 +351,9 @@ const Home: React.FC = () => {
                   disabled={startingSession}
                 >
                   {startingSession ? (
-                    <div className="flex items-center justify-center gap-2">
-                      <div className="animate-spin h-5 w-5 border-2 border-white/60 border-t-white rounded-full" aria-hidden="true" />
-                      <span>Starting...</span>
+                    <div className="flex items-center justify-center">
+                      <div className="animate-spin h-6 w-6 border-2 border-white/60 border-t-white rounded-full mx-auto" aria-hidden="true" />
+                      <span className="sr-only">Starting</span>
                     </div>
                   ) : (
                     'Start Session'

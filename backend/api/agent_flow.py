@@ -560,14 +560,27 @@ class TutorAgent:
                 logger.warning("No evaluations found for insights")
                 return None
             
-            # Calculate XP: 1 XP per answered question (as per requirement)
-            xp_points = total_questions
-            
             # Calculate Accuracy: percentage of correct answers
             correct_count = evaluations.filter(correct=True).count()
             accuracy = round((correct_count / total_questions) * 100, 2) if total_questions > 0 else 0.0
-            
-            logger.info(f"Session metrics - XP: {xp_points}, Accuracy: {accuracy}%, Total Q&A: {total_questions}")
+
+            # Calculate session XP as: (average XP per answered question * accuracy%) / 100
+            # - avg_xp: mean of EvaluatorResult.xp across attended evaluations
+            # - session_xp = (avg_xp * accuracy) / 100
+            # Store as integer XP points (rounded)
+            sum_xp = 0
+            for ev in evaluations:
+                # ensure xp is numeric; default to 0 if missing
+                try:
+                    sum_xp += float(ev.xp or 0)
+                except Exception:
+                    sum_xp += 0
+
+            avg_xp = (sum_xp / total_questions) if total_questions > 0 else 0.0
+            session_xp = (avg_xp * accuracy) / 100.0
+            xp_points = int(round(session_xp))
+
+            logger.info(f"Session metrics - avg_xp: {avg_xp:.2f}, session_xp: {xp_points}, Accuracy: {accuracy}%, Total Q&A: {total_questions}")
             
             # Build QA records for insights prompt
             qa_records = []
