@@ -810,7 +810,7 @@ class GeminiLLMClient:
         
         # System prompt for BoostMe insights
         system_prompt = """You are an insights-generator for InzightEd-G for Tamil learners. Output JSON only (no commentary).
-Language: Tanglish (Tamil in Latin letters). Keep each point concise (<= 15 words).
+Language: Tanglish (Tamil in only Latin letters without tamil alphabets). Keep each point concise (<= 15 words).
 Produce three zones based on the student's performance. Each zone must be an array of exactly two short points (strings).
 
 {
@@ -826,38 +826,20 @@ ZONE DEFINITIONS & LOGIC
    - Highlight the root cause (concept gap, recall issue, or misread question).  
    - Mention what needs to improve, not just that it’s “wrong.”  
    - Avoid generic words like “mistake,” “confused,” or “wrong.”  
-   - Output should point to *specific learning gap*.  
-
-   Examples:  
-   - "formula usage la thappu iruku, basics revise pannunga"  
-   - "concept clarity illa, logic steps skip panniruka"  
-   - "meaning miss panniruka, careful-a padikka venum"  
-   - "application method wrong side la poiduchu"  
-
+   - Output should point to *specific learning gap* mention the specific concept in a deeper sense or topic.  
+ 
 2. steady_zone → Strong / Confident Understanding  
    - Identify areas where the student showed consistent accuracy or strong reasoning.  
    - Highlight what they’re doing well — correct logic, structured solving, or recall clarity.  
    - Encourage retention of these skills.  
-   - Avoid generic praise; focus on *specific strengths*.  
-
-   Examples:  
-   - "concept grip super, approach clear-a iruku"  
-   - "logic perfect-a apply panniruka"  
-   - "accuracy high, recall nalla aagiduchu"  
-   - "pattern understanding romba solid"  
-
+   - Avoid generic praise; focus on *specific strengths* mentioned the specific concept in a deeper sense or topic.  
+ 
 3. edge_zone → Growth Potential / Near-Mastery  
    - Identify areas where the student was almost correct or partially right.  
    - Logic or approach is right, but minor slip or clarity issue exists.  
    - Show how a small fix leads to full mastery.  
-   - Tone should be positive and motivating.  
-
-   Examples:  
-   - "idea sari, last step la slip aagiduchu"  
-   - "logic strong, wording improve panna mudiyum"  
-   - "approach correct, calculation clarity venum"  
-   - "almost correct, thoda polish panna super aagum"  
-
+   - Tone should be positive and motivating.
+   - Avoid generic phrases, be specific and mention the concept in a deeper sense or topic.
 Each point should be in Tanglish and <= 15 words."""
         
         try:

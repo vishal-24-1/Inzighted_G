@@ -630,9 +630,42 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
             context_items.append((source_id, chunk_index, chunk_text))
 
     if not context_items:
-        # Strong safeguard: don't call LLM if we don't have any retrieved context
-        print("No relevant context found (or metadata missing). Skipping LLM call.")
-        return "I could not find any relevant information in your documents to answer this question."
+        # No relevant context found - use LLM to generate general knowledge response
+        print("No relevant context found in user documents. Using LLM general knowledge fallback.")
+        
+        fallback_prompt = (
+            "You are a helpful educational assistant. The user has asked a question but no relevant content was found in their uploaded documents.\n"
+            "Provide a helpful, educational answer based on your general knowledge. Keep the response concise and informative.\n"
+            "Mention that this answer is based on general knowledge since no specific content was found in their documents.\n\n"
+            "QUESTION: {query}\n\n"
+            "Provide a helpful answer:"
+        )
+        
+        try:
+            print("Calling Gemini LLM for general knowledge fallback...")
+            if not gemini_client.is_available():
+                return "Error: AI service is not available. Please check your configuration."
+            
+            fallback_response = gemini_client.generate_response(
+                fallback_prompt.format(query=query), 
+                max_tokens=800
+            )
+            
+            # Add a note that this is general knowledge
+            if fallback_response and not fallback_response.startswith("Error:"):
+                return f"{fallback_response}\n\n(Note: This answer is based on general knowledge as no specific content was found in your uploaded documents.)"
+            else:
+                return "I could not find any relevant information in your documents to answer this question, and I'm having trouble accessing general knowledge at the moment."
+                
+        except Exception as e:
+            print(f"Error in LLM general knowledge fallback: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "rag_query",
+                "function": "query_rag_fallback",
+                "user_id": user_id,
+                "query": query[:100]
+            })
+            return "I could not find any relevant information in your documents to answer this question."
 
     # Build a strict context prompt that forces the LLM to only use provided context
     context = "\n".join([f"[{sid}#{ci}] {txt}" for sid, ci, txt in context_items])

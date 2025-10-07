@@ -513,7 +513,7 @@ class TutorAgent:
             if any(p in lower_resp for p in prompting_phrases) or rag_response.strip().endswith('?'):
                 logger.info('[RAG] Detected prompting language in RAG output — forcing rewrite into direct answer')
                 rewrite_prompt = (
-                    f"Rewrite the following text into a clear, direct answer in Tanglish (mix of Tamil and English). "
+                    f"Rewrite the following text into a clear, direct answer in Tanglish (Tamil in latin words) and use English for technical terms. "
                     f"Do NOT ask the user any follow-up questions or tell them to try anything. "
                     f"Keep key facts and, if available, include short citations in square brackets like [doc:chunk].\n\n"
                     f"Original text:\n{rag_response}\n\n"
