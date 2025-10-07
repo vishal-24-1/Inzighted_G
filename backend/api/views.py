@@ -28,7 +28,7 @@ from google.oauth2 import id_token
 from google.auth.transport import requests
 
 # Utility: check Celery availability (ping workers)
-def is_celery_available(timeout: int = 1) -> bool:
+def is_celery_available(timeout: int = 2) -> bool:
     """Return True if Celery workers are available to accept tasks.
 
     Uses the Celery app control inspect().ping() call. Returns False on any
@@ -36,24 +36,33 @@ def is_celery_available(timeout: int = 1) -> bool:
     """
     try:
         # Import here to avoid import-time side-effects if Celery isn't configured
-        from hellotutor.celery import app as celery_app
+        from hellotutor.celery_app import app as celery_app
 
+        print(f"[Celery Check] Attempting to ping workers (timeout={timeout}s)...")
         insp = celery_app.control.inspect(timeout=timeout)
         if insp is None:
+            print("[Celery Check] ❌ inspect() returned None")
             return False
-        ping = insp.ping()
+        
+        ping_result = insp.ping()
+        print(f"[Celery Check] Ping result: {ping_result}")
+        
         # ping returns dict of {worker_name: {'ok': 'pong'}} when workers present
-        if not ping:
+        if not ping_result or not isinstance(ping_result, dict):
+            print(f"[Celery Check] ❌ No workers responded (result: {ping_result})")
             return False
+        
+        print(f"[Celery Check] ✅ Found {len(ping_result)} worker(s): {list(ping_result.keys())}")
         return True
+        
     except Exception as e:
         # Be conservative: on any error assume Celery unavailable
+        print(f"[Celery Check] ❌ Exception during availability check: {type(e).__name__}: {e}")
         try:
             import sentry_sdk
             sentry_sdk.capture_message(f"Celery availability check failed: {e}", level="warning")
         except Exception:
             pass
-        print(f"Celery availability check failed: {e}")
         return False
 
 class RegisterView(APIView):
