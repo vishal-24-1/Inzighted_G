@@ -32,7 +32,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   const [recognition, setRecognition] = useState<any | null>(null);
   const [sessionFinished, setSessionFinished] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
-  
+
   const [sessionDocument, setSessionDocument] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -120,7 +120,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       if (error.response?.status === 404) {
         alert('Tutoring session not found.');
         if (onEndSession) onEndSession();
-        else navigate('/');
+        else navigate('/boost');
       }
     }
   };
@@ -206,12 +206,12 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
     try {
       await tutoringAPI.endSession(sessionId);
       if (onEndSession) onEndSession();
-      else navigate('/');
+      else navigate('/boost');
     } catch (error: any) {
       console.error('Failed to end session:', error);
       // Still return to parent or navigate home even if end request fails
       if (onEndSession) onEndSession();
-      else navigate('/');
+      else navigate('/boost');
     } finally {
       // if the component is still mounted, clear the loading state
       try {
@@ -249,8 +249,8 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   // If embedded (parent provided onEndSession) and no session ID, simply render nothing.
   if (!sessionId) {
     if (onEndSession) return null;
-    // Redirect to home if no session ID and not embedded
-    navigate('/');
+    // Redirect to boost page if no session ID and not embedded
+    navigate('/boost');
     return null;
   }
 

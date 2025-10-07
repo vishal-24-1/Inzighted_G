@@ -2,9 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { insightsAPI } from '../utils/api';
-import { Menu, SquarePen as ChatIcon, Target, CheckCircle2, TrendingUp, Award, Percent } from 'lucide-react';
+import { Menu, Target, CheckCircle2, TrendingUp, Award, Plus } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import UserProfilePopup from '../components/UserProfilePopup';
+import MobileDock from '../components/MobileDock';
 
 interface Session {
   id: string;
@@ -277,7 +278,7 @@ const BoostMe: React.FC = () => {
     <div className="w-full min-h-screen bg-white text-gray-900 p-4 pb-24 flex flex-col overflow-x-hidden">
       <header className="w-full max-w-md flex items-center justify-between mb-4 md:ml-64 md:max-w-none md:border-b md:border-gray-200 md:pb-3">
         <button
-          className="md:hidden w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          className="md:hidden w-10 h-10 flex items-center justify-center bg-gray-100 rounded-full shadow-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
           aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={sidebarOpen}
           onClick={() => setSidebarOpen(true)}
@@ -297,12 +298,12 @@ const BoostMe: React.FC = () => {
         </div>
 
         <button
-          className="w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
-          aria-label="New chat"
-          title="New chat"
+          className="px-3 py-2 flex items-center justify-center bg-gray-100 rounded-full shadow-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 text-sm"
+          aria-label="New test"
+          title="New test"
           onClick={() => navigate('/')}
         >
-          <ChatIcon size={18} className="text-blue-600" />
+          <Plus size={16} className="mr-1" /> New test
         </button>
       </header>
 
@@ -469,6 +470,8 @@ const BoostMe: React.FC = () => {
           </div>
         )}
       </main>
+      {/* Mobile dock navigation */}
+      <MobileDock />
     </div>
   );
 };

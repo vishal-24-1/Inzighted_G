@@ -4,7 +4,8 @@ import { useNavigate } from 'react-router-dom';
 import DocumentSelector from '../components/DocumentSelector';
 import UserProfilePopup from '../components/UserProfilePopup';
 import Sidebar from '../components/Sidebar';
-import { FileText, Send, Menu, Mic } from 'lucide-react';
+import { FileText, Send, Rocket, User, Mic, X } from 'lucide-react';
+import MobileDock from '../components/MobileDock';
 
 // runtime feature detection is used below; avoid global type redeclarations
 
@@ -23,6 +24,7 @@ const Home: React.FC = () => {
   const [notificationMessage, setNotificationMessage] = useState<string | null>(null);
   const notificationTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [showUploadPromptModal, setShowUploadPromptModal] = useState(false);
 
   useEffect(() => {
     // Initialize speech recognition if available
@@ -154,16 +156,6 @@ const Home: React.FC = () => {
     }
   };
 
-  const handleChatSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (chatInput.trim()) {
-      // Instead of showing a toast, open the document selector modal
-      setShowDocumentSelector(true);
-      // Clear the chat input
-      setChatInput('');
-    }
-  };
-
   const handleVoiceRecord = () => {
     if (!recognition) return;
     try {
@@ -236,14 +228,13 @@ const Home: React.FC = () => {
     <>
       {/* Mobile view (used for all screen sizes) */}
       <div className="w-full min-h-screen bg-white text-gray-900 p-4 pb-24 flex flex-col">
-        <header className="flex items-center justify-between mb-4">
+        <header className="relative z-20 flex items-center justify-between mb-4">
           <button
-            className="md:hidden w-10 h-10 flex items-center justify-center bg-white rounded-full shadow-sm text-gray-700 border border-gray-100 hover:bg-gray-50"
-            aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
-            aria-expanded={sidebarOpen}
-            onClick={() => setSidebarOpen(true)}
+            className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
+            aria-label="Open profile"
+            onClick={handleProfileClick}
           >
-            <Menu size={18} />
+            <User size={18} />
           </button>
 
           <div className="flex-1" />
@@ -251,7 +242,7 @@ const Home: React.FC = () => {
             <button
               type="button"
               onClick={() => setShowDocumentSelector(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-700 rounded-full shadow-sm hover:bg-gray-50"
+              className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-full shadow-sm hover:bg-gray-50"
               aria-haspopup="dialog"
               aria-label="Open Library"
             >
@@ -265,47 +256,40 @@ const Home: React.FC = () => {
         {sidebarOpen && (
           <div className="fixed inset-0 bg-black/40 z-30" onClick={() => setSidebarOpen(false)} />
         )}
-        <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} onProfileClick={handleProfileClick} />
+        {/* Mobile/off-canvas sidebar: ensure it sits above the bottom chat bar (z-40) by using z-50 */}
+        {sidebarOpen && (
+          <div className="fixed inset-y-0 left-0 z-40">
+            <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} onProfileClick={handleProfileClick} />
+          </div>
+        )}
 
         {/* Static desktop sidebar (always visible on md+) */}
-        <div className="hidden md:block md:flex-shrink-0">
+        <div className="hidden md:block md:flex-shrink-0 md:relative md:z-40">
           <Sidebar isOpen={true} inlineOnDesktop={true} onProfileClick={handleProfileClick} />
         </div>
 
         <main className="flex-1 flex flex-col items-center justify-center space-y-6 md:ml-72">
 
-          <div className="w-full flex-1 flex flex-col items-center justify-center">
-            <h2 className="text-2xl font-semibold mb-4">Let's get started</h2>
+          <div className="w-full flex-1 flex flex-col items-center justify-center -mt-20 md:-mt-8">
+            <h2 className="text-xl text-center mb-4">Learn more <br /> about yourself</h2>
 
             <div className="w-full flex justify-center px-2">
-              <button
-                type="button"
-                onClick={() => { if (!uploading) fileInputRef.current?.click(); }}
-                className="w-40 aspect-square bg-white rounded-xl shadow-md p-4 flex flex-col items-center justify-center space-y-2 border border-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
-                disabled={uploading}
-                aria-busy={uploading}
-              >
-                <div className="w-12 h-12 flex items-center justify-center bg-gray-50 rounded-lg">
-                  <FileText size={20} className="text-gray-700" />
-                </div>
-                {!uploading ? (
-                  <>
-                    <span className="text-sm font-medium">Drop Your Notes</span>
-                    <p className="text-xs text-gray-500">Upload PDF, DOCX or TXT</p>
-                  </>
-                ) : (
-                  <div className="flex flex-col items-center">
-                    <div className="inline-flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                      </svg>
-                      <span className="text-sm font-medium">Uploading...</span>
-                    </div>
-                    <p className="text-xs text-gray-500 mt-1">Processing may take a minute</p>
+              <div className="flex justify-center">
+                {/* Boost Me button (styled like upload card) */}
+                <button
+                  type="button"
+                  onClick={() => navigate('/boost')}
+                  className="w-40 aspect-square rounded-xl p-4 flex flex-col items-center justify-center space-y-2 bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                  aria-label="Boost Me"
+                  disabled={uploading}
+                >
+                  <div className="w-12 h-12 flex items-center justify-center bg-blue-500 rounded-lg">
+                    <Rocket size={20} className="text-white" />
                   </div>
-                )}
-              </button>
+                  <span className="text-sm font-medium text-gray-900">Boost Me</span>
+                  <p className="text-xs text-gray-500">To know more about yourself & crack your exams</p>
+                </button>
+              </div>
             </div>
           </div>
 
@@ -340,7 +324,7 @@ const Home: React.FC = () => {
 
         {/* Tutoring Ready Popup */}
         {showTutoringPopup && (
-          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/50 p-4">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
             <div className="w-full max-w-sm bg-white rounded-lg p-4 shadow">
               <h3 className="text-lg font-semibold">Ready for Tutoring!</h3>
               <p className="text-sm text-gray-600 mt-2">Your document has been processed successfully. Would you like to start a tutoring session?</p>
@@ -373,52 +357,98 @@ const Home: React.FC = () => {
 
         {/* Document Selector Modal */}
         {showDocumentSelector && (
-          <DocumentSelector
-            onDocumentSelect={handleDocumentSelect}
-            onCancel={handleCancelDocumentSelection}
-            startingSession={startingSession}
-          />
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
+            <DocumentSelector
+              onDocumentSelect={handleDocumentSelect}
+              onCancel={handleCancelDocumentSelection}
+              onUpload={() => fileInputRef.current?.click()}
+              startingSession={startingSession}
+            />
+          </div>
         )}
 
         {/* User Profile Popup */}
         {showProfilePopup && (
-          <div className="fixed inset-0 z-40 flex items-center justify-center">
+          <div className="fixed inset-0 z-50 flex items-center justify-center">
             <UserProfilePopup onClose={handleCloseProfilePopup} />
           </div>
         )}
 
+        {/* Upload Prompt Modal */}
+        {showUploadPromptModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowUploadPromptModal(false)}>
+            <div className="w-full max-w-sm bg-white rounded-lg p-4 shadow text-center relative" onClick={(e) => e.stopPropagation()}>
+              <button
+                className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"
+                onClick={() => setShowUploadPromptModal(false)}
+                aria-label="Close modal"
+              >
+                <X size={16} />
+              </button>
+              <h3 className="text-lg font-semibold">Get Started</h3>
+              <p className="text-sm text-gray-600 mt-2">Upload your notes to begin learning or open your library.</p>
+              <div className="mt-4 flex flex-col gap-2">
+                <button
+                  className="bg-blue-600 text-white py-2 rounded-full"
+                  onClick={() => { setShowUploadPromptModal(false); fileInputRef.current?.click(); }}
+                  disabled={uploading}
+                >
+                  Upload Notes
+                </button>
+                <button
+                  className="bg-gray-100 text-gray-700 py-2 rounded-full"
+                  onClick={() => { setShowUploadPromptModal(false); setShowDocumentSelector(true); }}
+                >
+                  Open Library
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Fixed bottom chat input bar (mobile) — adapts on md+ to sit after the sidebar and look like a floating input */}
-        <div className="fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-4 z-40 md:left-72 md:right-6 md:bottom-6 md:top-auto md:w-auto md:bg-transparent md:border-0 md:p-0">
-          <form onSubmit={handleChatSubmit} className="flex items-center gap-2 max-w-3xl mx-auto md:bg-white md:rounded-full md:border md:border-gray-200 md:p-3 md:shadow-lg">
-            <div className="flex-1 h-11 bg-gray-50 rounded-full border-2 border-gray-200 transition-colors duration-300 flex items-center">
+        <div className="fixed bottom-20 left-0 w-full bg-white px-4 pb-2 z-20 md:left-72 md:right-6 md:bottom-6 md:top-auto md:w-auto md:bg-transparent md:border-0 md:p-0">
+          <div className="flex items-center gap-2 max-w-3xl mx-auto md:bg-white md:rounded-full md:border md:border-gray-200 md:p-3 md:shadow-lg">
+            <div
+              className="flex-1 h-14 bg-gray-100 rounded-full transition-colors duration-300 flex items-center px-3"
+              onClick={() => setShowUploadPromptModal(true)}
+            >
               <input
                 type="text"
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                placeholder="Type here ..."
-                className="flex-1 border-none bg-transparent px-3 text-base outline-none placeholder-gray-400"
+                onClick={() => setShowUploadPromptModal(true)}
+                placeholder="Drop your notes to get started..."
+                className="flex-1 border-none bg-transparent px-3 text-sm outline-none placeholder-gray-400"
               />
+
+              {/* Mic & Send button inside input */}
+              <button
+                type="button"
+                // purely decorative; pointer-events-none so clicks fall through to parent
+                className={`ml-2 w-9 h-9 rounded-full flex items-center justify-center transition-all duration-300 ${isListening ? 'bg-red-500 animate-pulse' : 'bg-transparent'} opacity-50 pointer-events-none`}
+                aria-label="Record voice (disabled)"
+                aria-disabled="true"
+              >
+                <Mic size={16} />
+              </button>
+              <button
+                type="button"
+                // decorative send button - non-interactive so parent handles clicks
+                className={`ml-2 w-9 h-9 rounded-full flex items-center justify-center transition-all duration-150 bg-blue-600 text-white opacity-50 pointer-events-none`}
+                aria-label="Send (disabled)"
+                aria-disabled="true"
+                title={chatInput ? 'Send (disabled)' : 'Open Library (disabled)'}
+              >
+                <Send size={16} />
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={handleVoiceRecord}
-              className={`w-11 h-11 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300 ${isListening ? 'bg-red-500 animate-pulse' : 'bg-gray-200 hover:bg-gray-300 hover:scale-105'} disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none`}
-              disabled={uploading}
-            >
-              <Mic size={19} />
-            </button>
-            <button
-              type="submit"
-              className="w-11 h-11 rounded-full bg-blue-500 text-white flex items-center justify-center cursor-pointer transition-all duration-300 hover:bg-blue-600 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-              disabled={!chatInput.trim() || uploading}
-            >
-              <Send size={19} style={{ marginLeft: '-4px' }} />
-            </button>
-          </form>
+          </div>
         </div>
       </div>
 
-      {/* Desktop view removed - mobile view is used for all screen sizes */}
+      {/* Mobile dock navigation */}
+      <MobileDock />
     </>
   );
 };
