@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { insightsAPI } from '../utils/api';
-import { Menu, Target, CheckCircle2, TrendingUp, Award, Plus } from 'lucide-react';
+import { Target, CheckCircle2, TrendingUp, Award, Plus, TextAlignStart, Sparkles } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import UserProfilePopup from '../components/UserProfilePopup';
 import MobileDock from '../components/MobileDock';
@@ -218,6 +218,19 @@ const BoostMe: React.FC = () => {
     );
   };
 
+  // Simple horizontal progress bar (value: 0-100)
+  const BarProgress: React.FC<{ value: number; height?: number; color?: string }> = ({ value, height = 12, color = '#10B981' }) => {
+    const capped = Math.max(0, Math.min(100, Number(value) || 0));
+    return (
+      <div className="w-full mt-3">
+        <div className="w-full bg-gray-200 rounded-full overflow-hidden" style={{ height }} role="progressbar" aria-valuenow={capped} aria-valuemin={0} aria-valuemax={100}>
+          <div style={{ width: `${capped}%`, height: '100%', backgroundColor: color }} />
+        </div>
+        <div className="text-xs text-gray-700 mt-1 text-start">{capped.toFixed(0)}%</div>
+      </div>
+    );
+  };
+
   // Touch/swipe handling
   const minSwipeDistance = 50;
 
@@ -250,21 +263,21 @@ const BoostMe: React.FC = () => {
   const boostMeCards = insights ? [
     {
       type: 'Focus Zone',
-      description: '🎯 Areas to improve',
+      description: 'Areas to improve',
       content: insights.insights.focus_zone,
       color: '#dc3545',
       icon: <Target size={20} className="text-white" />
     },
     {
       type: 'Steady Zone',
-      description: '✅ Strong areas',
+      description: 'Strong areas',
       content: insights.insights.steady_zone,
       color: '#28a745',
       icon: <CheckCircle2 size={20} className="text-white" />
     },
     {
       type: 'Edge Zone',
-      description: '⚡ Growth potential',
+      description: 'Growth potential',
       content: insights.insights.edge_zone,
       color: '#007bff',
       icon: <TrendingUp size={20} className="text-white" />
@@ -274,19 +287,31 @@ const BoostMe: React.FC = () => {
   // Guard to avoid division by zero when computing carousel widths
   const cardCount = Math.max(boostMeCards.length, 1);
 
+  // Convert hex color to rgba string (supports 3- or 6-digit hex). Falls back to a neutral gray.
+  const hexToRgba = (hex?: string, alpha = 1) => {
+    let h = (hex || '#e5e7eb').replace('#', '');
+    if (h.length === 3) {
+      h = h.split('').map(ch => ch + ch).join('');
+    }
+    const r = parseInt(h.substring(0, 2), 16);
+    const g = parseInt(h.substring(2, 4), 16);
+    const b = parseInt(h.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+  };
+
   return (
-    <div className="w-full min-h-screen bg-white text-gray-900 p-4 pb-24 flex flex-col overflow-x-hidden">
-      <header className="w-full max-w-md flex items-center justify-between mb-4 md:ml-64 md:max-w-none md:border-b md:border-gray-200 md:pb-3">
+    <div className="w-full min-h-screen bg-white text-gray-900 px-2 pt-2 pb-24 flex flex-col overflow-x-hidden">
+      <header className="sticky top-0 w-full max-w-md flex items-center justify-between mb-4 md:ml-64 md:max-w-none md:border-b md:border-gray-200 md:pb-3 z-[45] bg-white">
         <button
-          className="md:hidden w-10 h-10 flex items-center justify-center bg-gray-100 rounded-full shadow-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300"
+          className={`md:hidden w-10 h-10 flex items-center justify-center rounded-full text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 ${sidebarOpen ? '' : 'z-[55]'}`}
           aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={sidebarOpen}
           onClick={() => setSidebarOpen(true)}
         >
-          <Menu size={18} />
+          <TextAlignStart size={18} />
         </button>
 
-        <div className="flex-1 text-center md:ml-8 md:text-left">
+        <div className="flex-1 text-center -ml-8">
           {/** Show truncated session/document name in header */}
           {(() => {
             const raw = selectedSession?.document_name || insights?.document_name || selectedSession?.title || 'Boost Me';
@@ -296,20 +321,12 @@ const BoostMe: React.FC = () => {
             return <h1 className="text-sm md:text-lg font-semibold">{truncated}</h1>;
           })()}
         </div>
-
-        <button
-          className="px-3 py-2 flex items-center justify-center bg-gray-100 rounded-full shadow-sm text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 text-sm"
-          aria-label="New test"
-          title="New test"
-          onClick={() => navigate('/')}
-        >
-          <Plus size={16} className="mr-1" /> New test
-        </button>
       </header>
 
       {/* Sidebar and backdrop */}
       {sidebarOpen && (
-        <div className="fixed inset-0 bg-black/40 z-30" onClick={() => setSidebarOpen(false)} />
+        // backdrop sits below the sidebar (which is z-60), so use z-50 here
+        <div className="fixed inset-0 bg-black/40 z-50" onClick={() => setSidebarOpen(false)} />
       )}
       <Sidebar
         isOpen={sidebarOpen}
@@ -347,22 +364,38 @@ const BoostMe: React.FC = () => {
         </div>
       )}
 
-      <main className="w-full max-w-md px-3 md:ml-72 mx-auto md:mx-0">
-        {selectedSession && (
-          <div className="mt-3">
-            {/* Center the circle, but left-align the title/subtitle */}
-            {insights ? (
-              <>
+      <main className="w-full max-w-md px-3 md:ml-72 mx-auto ">
+        {/* Accuracy & XP container */}
+        {insights && (
+          <>
+            <div className="flex flex-col justify-center mt-4 mb-6 bg-gray-100 rounded-xl p-4 shadow-sm">
+              <div className="w-full flex items-center justify-between mb-3">
                 <div className="text-left">
-                  <h2 className="text-base font-semibold">AI Generated Tips</h2>
-                  <p className="text-xs text-gray-500">{insights.total_qa_pairs} Q&A pairs analyzed</p>
+                  <h3 className="font-bold">Accuracy & XP Points</h3>
                 </div>
-              </>
-            ) : (
-              <h2 className="text-base font-semibold">AI Generated Tips</h2>
-            )}
-          </div>
+                <div
+                  aria-hidden={false}
+                  title={`${insights.insights.xp_points ?? 0} XP points`}
+                >
+                  <div className="bg-blue-500 text-white text-xs font-semibold rounded-full px-2 py-1 shadow-md flex items-center gap-1">
+                    <Award size={14} className="text-white" />
+                    <span>{insights.insights.xp_points ?? 0} XP</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-center w-full">
+                {/* Horizontal progress bar centered inside the container */}
+                <BarProgress value={insights.insights.accuracy ?? 0} height={12} color="#10B981" />
+              </div>
+            </div>
+          </>
         )}
+
+        <div className="text-sm mb-3 flex bg-gray-700 text-white w-fit items-center px-3 py-1 rounded-full gap-1">
+          AI Generated Tips
+          <Sparkles size={10} className="text-white ml-1" />
+        </div>
 
 
         {/* Loading */}
@@ -383,18 +416,20 @@ const BoostMe: React.FC = () => {
                 onTouchEnd={onTouchEnd}
               >
                 {boostMeCards.map((card, index) => (
-                  <div key={index} className="py-4" style={{ width: `${100 / cardCount}%` }}>
-                    <div className="bg-white rounded-lg p-4 h-full shadow-sm" style={{ border: `0.02rem solid ${card.color}` }}>
-                      <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 rounded-full" style={{ background: card.color }}>
-                          {card.icon}
-                        </div>
+                  <div key={index} className="pb-4" style={{ width: `${100 / cardCount}%` }}>
+                    <div
+                      className="rounded-xl p-2 h-full"
+                      style={{
+                        backgroundImage: `linear-gradient(135deg, ${hexToRgba(card.color, 0.18)}, ${hexToRgba(card.color, 0.36)})`
+                      }}
+                    >
+                      <div className="flex items-center mb-2 pl-2 pt-2">
                         <div>
-                          <h3 className="text-lg font-semibold" style={{ color: card.color }}>{card.type}</h3>
+                          <h3 className="text-lg font-semibold text-gray-800">{card.type}</h3>
                           <p className="text-xs text-gray-500">{card.description}</p>
                         </div>
                       </div>
-                      <div className="text-sm text-gray-700 text-left">
+                      <div className="text-sm text-gray-700 text-left bg-white rounded-lg px-2 py-4">
                         {Array.isArray(card.content) && card.content.length > 0 ? (
                           <ul className="list-disc pl-5 space-y-2">
                             {card.content.map((item, idx) => (
@@ -411,52 +446,8 @@ const BoostMe: React.FC = () => {
               </div>
             </div>
 
-            {/* Card Indicators */}
-            <div className="flex items-center justify-center gap-2 mt-2">
-              {boostMeCards.map((_, index) => (
-                <button
-                  key={index}
-                  onClick={() => setCurrentCardIndex(index)}
-                  className={`h-2.5 ${currentCardIndex === index ? 'w-10 bg-blue-500' : 'w-2.5 bg-gray-200'} rounded-full transition-all`}
-                  aria-label={`View ${boostMeCards[index].type} card`}
-                />
-              ))}
-            </div>
+            <div className="text-xs text-gray-500 mt-1 text-center">← Swipe to explore insights →</div>
 
-            <div className="text-xs text-gray-500 mt-3 text-center">← Swipe to explore insights →</div>
-
-            {/* Accuracy circle with XP badge overlayed (moved XP into the circle) */}
-            {insights && (
-              <>
-                <div className="mt-4 mb-2 text-left">
-                  <h3 className="font-bold">Accuracy & XP Points</h3>
-                </div>
-                <div className="flex justify-center my-4 bg-gray-50 border rounded-xl p-4 relative">
-                  {/* XP badge placed at the top-right of the circle container (not over the circle) */}
-                  <div
-                    className="absolute right-3 top-3"
-                    aria-hidden={false}
-                    title={`${insights.insights.xp_points ?? 0} XP points`}
-                  >
-                    <div className="bg-blue-500 text-white text-xs font-semibold rounded-full px-2 py-1 shadow-md flex items-center gap-1">
-                      <Award size={14} className="text-white" />
-                      <span>{insights.insights.xp_points ?? 0} XP</span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-center w-full">
-                    {/* Circle centered inside the container */}
-                    <CircleProgress value={insights.insights.accuracy ?? 0} size={92} strokeWidth={10} color="#10B981" />
-                  </div>
-                </div>
-                {/* Brief explanation below the circle */}
-                <div className="text-center text-sm text-gray-600 mt-2 px-4">
-                  <p className="mt-1 text-xs text-gray-500">Tip: Start with Focus Zone to improve fastest.</p>
-                </div>
-              </>
-            )}
-
-            {/* XP now shown as a badge overlaying the accuracy circle above. The separate XP card was removed. */}
           </div>
         ) : selectedSession ? (
           <div className="text-center py-8">
@@ -471,6 +462,17 @@ const BoostMe: React.FC = () => {
         )}
       </main>
       {/* Mobile dock navigation */}
+      {/* Floating plus button above the mobile dock (mobile-only) */}
+      <div className="md:hidden fixed right-6 bottom-24 z-40">
+        <button
+          onClick={() => navigate('/', { state: { openUploadPrompt: true } })}
+          aria-label="New test"
+          title="New test"
+          className="w-14 h-14 rounded-full bg-blue-600 text-white flex items-center justify-center text-center shadow-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
+        >
+          <Plus size={32} strokeWidth={4} aria-hidden="true" />
+        </button>
+      </div>
       <MobileDock />
     </div>
   );

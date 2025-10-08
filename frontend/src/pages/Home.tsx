@@ -1,16 +1,19 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { documentsAPI, tutoringAPI } from '../utils/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import DocumentSelector from '../components/DocumentSelector';
 import UserProfilePopup from '../components/UserProfilePopup';
 import Sidebar from '../components/Sidebar';
-import { FileText, Send, Rocket, User, Mic, X } from 'lucide-react';
+import { FileText, Send, Rocket, UserRound, Mic, X } from 'lucide-react';
 import MobileDock from '../components/MobileDock';
+import UploadPromptModal from '../components/UploadPromptModal';
+import logo from '../logo.svg';
 
 // runtime feature detection is used below; avoid global type redeclarations
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [uploading, setUploading] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -27,6 +30,23 @@ const Home: React.FC = () => {
   const [showUploadPromptModal, setShowUploadPromptModal] = useState(false);
 
   useEffect(() => {
+    // If another page navigated here with intent to open the upload prompt, handle it.
+    try {
+      const state: any = (location && (location as any).state) || {};
+      if (state.openUploadPrompt) {
+        setShowUploadPromptModal(true);
+        // Clear the history state so the modal doesn't reopen on back/forward navigation
+        if (window.history && typeof window.history.replaceState === 'function') {
+          const newState = { ...(window.history.state || {}), ...(state || {}) };
+          // remove our flag
+          delete newState.openUploadPrompt;
+          try { window.history.replaceState(newState, document.title); } catch (e) { /* ignore */ }
+        }
+      }
+    } catch (e) {
+      // ignore
+    }
+
     // Initialize speech recognition if available
     if ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -193,8 +213,9 @@ const Home: React.FC = () => {
   };
 
   const handleDocumentSelect = async (documentIds: string[]) => {
+    // Close selector and show the same uploading/processing overlay used for uploads
     setShowDocumentSelector(false);
-
+    setUploading(true);
     try {
       // If documentIds is empty, start a general session. If multiple ids provided, pass them.
       const payload = documentIds.length === 0 ? undefined : (documentIds.length === 1 ? documentIds[0] : documentIds);
@@ -209,6 +230,8 @@ const Home: React.FC = () => {
 
     } catch (error: any) {
       alert('Failed to start tutoring session: ' + (error.response?.data?.error || 'Unknown error'));
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -226,29 +249,47 @@ const Home: React.FC = () => {
 
   return (
     <>
-      {/* Mobile view (used for all screen sizes) */}
-      <div className="w-full min-h-screen bg-white text-gray-900 p-4 pb-24 flex flex-col">
-        <header className="relative z-20 flex items-center justify-between mb-4">
-          <button
-            className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
-            aria-label="Open profile"
-            onClick={handleProfileClick}
-          >
-            <User size={18} />
-          </button>
+      {/* Decorative grid background (very back). Fixed so it sits behind the whole app including MobileDock. */}
+      <div
+        aria-hidden
+        className="fixed inset-0 z-0 pointer-events-none"
+        style={{
+          backgroundImage: `linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,1) 70%), repeating-linear-gradient(0deg, rgba(0,0,0,0.03) 0 1px, transparent 1px 28px), repeating-linear-gradient(90deg, rgba(0,0,0,0.03) 0 1px, transparent 1px 28px)`,
+          backgroundSize: '100% 100%, auto, auto',
+          opacity: 0.9,
+        }}
+      />
 
-          <div className="flex-1" />
-          <div className="flex items-center gap-2">
+      {/* Mobile view (used for all screen sizes) */}
+      <div className="relative w-full min-h-screen text-gray-900 p-4 pb-24 flex flex-col overflow-hidden">
+        <header className="relative z-20 mb-4">
+          <div className="flex items-center justify-between">
             <button
-              type="button"
-              onClick={() => setShowDocumentSelector(true)}
-              className="inline-flex items-center gap-2 px-3 py-2 bg-gray-100 text-gray-700 rounded-full shadow-sm hover:bg-gray-50"
-              aria-haspopup="dialog"
-              aria-label="Open Library"
+              className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
+              aria-label="Open profile"
+              onClick={handleProfileClick}
             >
-              <FileText size={16} />
-              <span className="text-sm font-medium">Library</span>
+              <UserRound size={18} strokeWidth={2.5} />
             </button>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowDocumentSelector(true)}
+                className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
+                aria-haspopup="dialog"
+                aria-label="Open Library"
+              >
+                <FileText size={18} strokeWidth={2.5} />
+              </button>
+            </div>
+          </div>
+
+          {/* Centered logo: absolutely positioned so it's centered regardless of left/right widths */}
+          <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+            <a className="flex items-center gap-3 pointer-events-auto">
+              <img src={logo} alt="InzightEd" className="h-5 w-auto mt-1" />
+            </a>
           </div>
         </header>
 
@@ -362,7 +403,9 @@ const Home: React.FC = () => {
               onDocumentSelect={handleDocumentSelect}
               onCancel={handleCancelDocumentSelection}
               onUpload={() => fileInputRef.current?.click()}
-              startingSession={startingSession}
+              // show the modal's "starting" UI when either a session start is in progress
+              // or the global "uploading" overlay is active so the UX matches the home page
+              startingSession={startingSession || uploading}
             />
           </div>
         )}
@@ -374,37 +417,13 @@ const Home: React.FC = () => {
           </div>
         )}
 
-        {/* Upload Prompt Modal */}
-        {showUploadPromptModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowUploadPromptModal(false)}>
-            <div className="w-full max-w-sm bg-white rounded-lg p-4 shadow text-center relative" onClick={(e) => e.stopPropagation()}>
-              <button
-                className="absolute top-2 right-2 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"
-                onClick={() => setShowUploadPromptModal(false)}
-                aria-label="Close modal"
-              >
-                <X size={16} />
-              </button>
-              <h3 className="text-lg font-semibold">Get Started</h3>
-              <p className="text-sm text-gray-600 mt-2">Upload your notes to begin learning or open your library.</p>
-              <div className="mt-4 flex flex-col gap-2">
-                <button
-                  className="bg-blue-600 text-white py-2 rounded-full"
-                  onClick={() => { setShowUploadPromptModal(false); fileInputRef.current?.click(); }}
-                  disabled={uploading}
-                >
-                  Upload Notes
-                </button>
-                <button
-                  className="bg-gray-100 text-gray-700 py-2 rounded-full"
-                  onClick={() => { setShowUploadPromptModal(false); setShowDocumentSelector(true); }}
-                >
-                  Open Library
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
+        <UploadPromptModal
+          isOpen={showUploadPromptModal}
+          onClose={() => setShowUploadPromptModal(false)}
+          onUpload={() => { setShowUploadPromptModal(false); fileInputRef.current?.click(); }}
+          onOpenLibrary={() => { setShowUploadPromptModal(false); setShowDocumentSelector(true); }}
+          uploading={uploading}
+        />
 
         {/* Fixed bottom chat input bar (mobile) — adapts on md+ to sit after the sidebar and look like a floating input */}
         <div className="fixed bottom-20 left-0 w-full bg-white px-4 pb-2 z-20 md:left-72 md:right-6 md:bottom-6 md:top-auto md:w-auto md:bg-transparent md:border-0 md:p-0">
@@ -416,10 +435,16 @@ const Home: React.FC = () => {
               <input
                 type="text"
                 value={chatInput}
-                onChange={(e) => setChatInput(e.target.value)}
+                readOnly
+                // Keep click to open the upload prompt, but prevent focus so
+                // the cursor doesn't appear and mobile keyboards don't open.
                 onClick={() => setShowUploadPromptModal(true)}
+                onFocus={(e) => e.currentTarget.blur()}
+                onMouseDown={(e) => e.preventDefault()}
+                onTouchStart={(e) => e.preventDefault()}
                 placeholder="Drop your notes to get started..."
                 className="flex-1 border-none bg-transparent px-3 text-sm outline-none placeholder-gray-400"
+                aria-readonly="true"
               />
 
               {/* Mic & Send button inside input */}
