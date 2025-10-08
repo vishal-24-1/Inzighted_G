@@ -1,13 +1,7 @@
 {
   "namespaces": {
-    "00e7e7fd43e9f861188bdebbe085192feb64d26bd1f4e92c7d21a6f97c73ec2b": {
-      "vector_count": 31
-    },
-    "82e98f702fb861589f8dd6a2984664ac1c464dcc06cb072e59195b12ad13acb5": {
-      "vector_count": 11
-    },
-    "29e40dc81702bc2da9d7ba2060d9007bf22ee6af1545d5e4bb692e6613a0f28f": {
-      "vector_count": 6
+    "c6b583c3de0fc8e82703e0617fd900c3cc03bf86902f95fcece14858dbc98efe": {
+      "vector_count": 64
     }
   }
 }

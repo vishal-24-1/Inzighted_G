@@ -35,7 +35,8 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
 
   const [sessionDocument, setSessionDocument] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const initialInputHeight = 44; // px - used to reset after send
 
   useEffect(() => {
     // Initialize speech recognition
@@ -53,8 +54,29 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       recognitionInstance.onresult = (event: any) => {
         const transcript = event?.results?.[0]?.[0]?.transcript || '';
         if (transcript) {
-          setInputText(transcript);
-          inputRef.current?.focus();
+          // Append transcript to existing text (ChatGPT-like behaviour)
+          setInputText((prev) => {
+            const next = prev && prev.trim() ? `${prev} ${transcript}` : transcript;
+            return next;
+          });
+
+          // Focus and move caret to end after a tick so the textarea updates first
+          setTimeout(() => {
+            try {
+              const el = inputRef.current;
+              if (el) {
+                el.focus();
+                // move caret to end
+                const len = el.value.length;
+                el.selectionStart = el.selectionEnd = len;
+                // adjust height to fit new content
+                el.style.height = 'auto';
+                el.style.height = Math.min(el.scrollHeight, 240) + 'px';
+              }
+            } catch (e) {
+              // ignore
+            }
+          }, 0);
         }
       };
 
@@ -139,6 +161,12 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
 
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
+    // Reset textarea height to initial value after sending
+    try {
+      if (inputRef.current) {
+        inputRef.current.style.height = initialInputHeight + 'px';
+      }
+    } catch (e) {}
     setIsLoading(true);
 
     try {
@@ -318,15 +346,21 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
             <div className="bg-white border-t border-gray-200 p-4 sticky bottom-0">
               <form onSubmit={handleSubmitAnswer} className="w-full">
                 <div className="flex items-center gap-2">
-                  <div className="flex-1 h-11 bg-gray-50 rounded-full border-2 border-gray-200 focus-within:border-blue-500 transition-colors duration-300 flex items-center">
-                    <input
+                  <div className="flex-1 bg-gray-50 rounded-xl border-2 border-gray-200 focus-within:border-blue-500 transition-colors duration-300 flex items-center">
+                    <textarea
                       ref={inputRef}
-                      type="text"
                       value={inputText}
-                      onChange={(e) => setInputText(e.target.value)}
+                      onChange={(e) => {
+                        setInputText(e.target.value);
+                        // Auto-resize textarea
+                        const el = e.target as HTMLTextAreaElement;
+                        el.style.height = 'auto';
+                        el.style.height = Math.min(el.scrollHeight, 240) + 'px';
+                      }}
                       placeholder="Type your answer here..."
-                      className="flex-1 border-none bg-transparent px-3 text-base outline-none placeholder-gray-400"
+                      className="flex-1 resize-none border-none bg-transparent px-3 py-2 text-base outline-none placeholder-gray-400 max-h-60"
                       disabled={isLoading || sessionFinished}
+                      rows={1}
                     />
                   </div>
                   <button
