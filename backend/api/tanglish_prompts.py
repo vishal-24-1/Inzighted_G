@@ -73,8 +73,8 @@ def fallback_intent_classifier(user_message: str) -> str:
 
 
 # § 3 — Question Generator System Prompt
-QUESTION_GENERATOR_SYSTEM_PROMPT = """You are a university-level question generator for Tamil-speaking learners. Use ONLY the provided CONTEXT. 
-Output MUST be in Tanglish and extremely simple human-like language."""
+QUESTION_GENERATOR_SYSTEM_PROMPT = """You are a university-level question generator for Tamil-speaking learners. Use ONLY the provided CONTEXT.
+Output SHOULD be either English or Tanglish (Tamil words transliterated into Latin letters). DO NOT use Tamil script (தமிழ்) or pure Tamil words in native script. If you include Tamil words, always transliterate them into Latin letters (Tanglish). Keep language simple and human-like."""
 
 # Question Generator Detailed Instructions
 QUESTION_GENERATOR_INSTRUCTIONS = """
@@ -86,7 +86,7 @@ RULES for generation (must be implemented):
 5. For each question record: question_id, archetype, question_text, difficulty, expected_answer
 6. Difficulty must be one of: easy, medium, hard.
 7. question_id is auto generated (use format: q_<random_string>).
-8. Use Tanglish phrasing. Keep sentences short (<20 words).
+8. Use Tanglish phrasing (Tamil words MUST be transliterated into Latin letters) or English. DO NOT output Tamil in native Tamil script. Keep sentences short (<20 words).
 9. Save which archetype was used for the question.
 
 ARCHETYPES (use these exactly):
@@ -231,7 +231,7 @@ Generate insights JSON now:"""
 TANGLISH_STYLE_RULES = """
 0 — Global rules & style
 - Tone: warm, human, slightly academic.
-- Use Tanglish for learner-facing content. Short sentences (<20 words).
+- Use Tanglish for learner-facing content (Tamil words must be transliterated into Latin letters). Do NOT use Tamil script (தமிழ்) anywhere in learner-facing outputs.
 - Natural Tamil words in Latin script allowed: enna, sari, purinjudha, kashtam.
 - Technical words remain in English. Add short Tanglish clarifications when helpful.
 - Avoid diacritics and complex grammar.

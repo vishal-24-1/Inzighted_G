@@ -255,124 +255,125 @@ class GeminiLLMClient:
         """
         if not texts:
             return []
-        
-        # Get concurrency settings
+
+        # Get concurrency and retry settings (local to this function)
         max_workers = getattr(settings, 'EMBEDDING_CONCURRENCY', 5)
-        max_retries = getattr(settings, 'EMBEDDING_MAX_RETRIES', 3)
+        max_retries = getattr(settings, 'EMBEDDING_MAX_RETRIES', 5)
         backoff_base = getattr(settings, 'EMBEDDING_RETRY_BACKOFF_BASE', 1.0)
         backoff_max = getattr(settings, 'EMBEDDING_RETRY_BACKOFF_MAX', 10.0)
-        
+
         logger.info(f"Starting parallel embedding for {len(texts)} texts with {max_workers} workers")
         start_time = time.time()
-        
+
+        session = requests.Session()
+
         def embed_single_text(idx_text_pair):
             """Worker function to embed a single text with retry logic"""
             idx, text = idx_text_pair
-            session = requests.Session()
-            
-            try:
-                for attempt in range(1, max_retries + 1):
-                    try:
-                        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
-                        headers = {'Content-Type': 'application/json'}
-                        data = {
-                            "model": "models/gemini-embedding-001",
-                            "content": {
-                                "parts": [{"text": text}]
-                            }
-                        }
-                        params = {'key': settings.EMBEDDING_API_KEY}
-                        
-                        response = requests.post(url, headers=headers, json=data, params=params, timeout=30)
-                        response.raise_for_status()
-                        
-                        result = response.json()
-                        embedding = result['embedding']['values']
-                        
-                        logger.debug(f"Embedding {idx}: success on attempt {attempt}")
-                        return (idx, embedding, attempt)
-                        
-                    except requests.exceptions.HTTPError as e:
-                        if e.response.status_code in [429, 503, 502] and attempt < max_retries:
-                            # Calculate backoff with jitter
-                            backoff = min(backoff_max, backoff_base * (2 ** (attempt - 1)))
-                            jitter = random.uniform(0, 0.1 * backoff)
-                            sleep_time = backoff + jitter
-                            
-                            logger.warning(f"Embedding {idx}: HTTP {e.response.status_code} on attempt {attempt}, retrying in {sleep_time:.2f}s")
+
+            for attempt in range(1, max_retries + 1):
+                try:
+                    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent"
+                    headers = {'Content-Type': 'application/json'}
+                    data = {
+                        "model": "models/gemini-embedding-001",
+                        "content": {"parts": [{"text": text}]}
+                    }
+                    params = {'key': settings.EMBEDDING_API_KEY}
+
+                    response = session.post(url, headers=headers, json=data, params=params, timeout=30)
+                    response.raise_for_status()
+
+                    result = response.json()
+                    embedding = result['embedding']['values']
+
+                    logger.debug(f"Embedding {idx}: success on attempt {attempt}")
+                    return (idx, embedding, attempt)
+
+                except requests.exceptions.HTTPError as e:
+                    status_code = getattr(e.response, 'status_code', None)
+
+                    # If Retry-After is provided on 429, honor it
+                    if status_code == 429 and attempt < max_retries:
+                        retry_after = None
+                        hdr = e.response.headers.get('Retry-After') if e.response is not None else None
+                        if hdr is not None:
+                            try:
+                                retry_after = int(hdr)
+                            except Exception:
+                                retry_after = None
+
+                        if retry_after and retry_after > 0:
+                            sleep_time = min(backoff_max, retry_after) + random.uniform(0, 0.2 * retry_after)
+                            logger.warning(f"Embedding {idx}: HTTP 429 with Retry-After={retry_after}s, sleeping {sleep_time:.2f}s before retry (attempt {attempt}/{max_retries})")
                             time.sleep(sleep_time)
                             continue
-                        else:
-                            logger.error(f"Embedding {idx}: HTTP error {e.response.status_code} on attempt {attempt}")
-                            raise
-                    
-                    except requests.exceptions.RequestException as e:
-                        if attempt < max_retries:
-                            backoff = min(backoff_max, backoff_base * (2 ** (attempt - 1)))
-                            jitter = random.uniform(0, 0.1 * backoff)
-                            sleep_time = backoff + jitter
-                            
-                            logger.warning(f"Embedding {idx}: Request error on attempt {attempt}, retrying in {sleep_time:.2f}s: {e}")
-                            time.sleep(sleep_time)
-                            continue
-                        else:
-                            logger.error(f"Embedding {idx}: Request failed after {attempt} attempts: {e}")
-                            raise
-                
-                # If we get here, all retries failed
-                raise ValueError(f"Failed to get embedding for text {idx} after {max_retries} attempts")
-                
-            finally:
-                session.close()
-        
-        # Execute embeddings in parallel
+
+                    # For 502/503/429 without Retry-After, exponential backoff
+                    if status_code in [429, 503, 502] and attempt < max_retries:
+                        backoff = min(backoff_max, backoff_base * (2 ** (attempt - 1)))
+                        jitter = random.uniform(0, 0.1 * backoff)
+                        sleep_time = backoff + jitter
+                        logger.warning(f"Embedding {idx}: HTTP {status_code} on attempt {attempt}, retrying in {sleep_time:.2f}s")
+                        time.sleep(sleep_time)
+                        continue
+
+                    logger.error(f"Embedding {idx}: HTTP error {status_code} on attempt {attempt}")
+                    raise
+
+                except requests.exceptions.RequestException as e:
+                    if attempt < max_retries:
+                        backoff = min(backoff_max, backoff_base * (2 ** (attempt - 1)))
+                        jitter = random.uniform(0, 0.1 * backoff)
+                        sleep_time = backoff + jitter
+                        logger.warning(f"Embedding {idx}: Request error on attempt {attempt}, retrying in {sleep_time:.2f}s: {e}")
+                        time.sleep(sleep_time)
+                        continue
+                    else:
+                        logger.error(f"Embedding {idx}: Request failed after {attempt} attempts: {e}")
+                        raise
+
+            # If we get here, all retries failed for this text
+            raise ValueError(f"Failed to get embedding for text {idx} after {max_retries} attempts")
+
         embeddings = [None] * len(texts)
         failed_indices = []
-        
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            # Submit all tasks
-            future_to_idx = {
-                executor.submit(embed_single_text, (idx, text)): idx 
-                for idx, text in enumerate(texts)
-            }
-            
-            # Collect results as they complete
-            for future in concurrent.futures.as_completed(future_to_idx):
-                try:
-                    idx, embedding, attempts = future.result()
-                    embeddings[idx] = embedding
-                    logger.debug(f"Collected embedding {idx} (took {attempts} attempts)")
-                    
-                except Exception as e:
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_to_idx = {executor.submit(embed_single_text, (idx, text)): idx for idx, text in enumerate(texts)}
+
+                for future in concurrent.futures.as_completed(future_to_idx):
                     idx = future_to_idx[future]
-                    failed_indices.append(idx)
-                    logger.error(f"Failed to get embedding for text {idx}: {e}")
-        
+                    try:
+                        i, embedding, attempts = future.result()
+                        embeddings[i] = embedding
+                        logger.debug(f"Collected embedding {i} (took {attempts} attempts)")
+                    except Exception as e:
+                        failed_indices.append(idx)
+                        logger.error(f"Failed to get embedding for text {idx}: {e}")
+
+        finally:
+            try:
+                session.close()
+            except Exception:
+                pass
+
         # Check for failures
         if failed_indices:
             error_msg = f"Failed to get embeddings for {len(failed_indices)} texts at indices: {failed_indices}"
             logger.error(error_msg)
-            sentry_sdk.capture_message(
-                error_msg,
-                level="error",
-                extras={
-                    "component": "gemini_client",
-                    "method": "_get_embeddings_with_requests",
-                    "failed_count": len(failed_indices),
-                    "total_count": len(texts)
-                }
-            )
+            sentry_sdk.capture_message(error_msg, level="error", extras={"component": "gemini_client", "method": "_get_embeddings_with_requests", "failed_count": len(failed_indices), "total_count": len(texts)})
             raise ValueError(error_msg)
-        
-        # Validate all embeddings were collected
+
         if None in embeddings:
             missing_indices = [i for i, emb in enumerate(embeddings) if emb is None]
             raise ValueError(f"Missing embeddings at indices: {missing_indices}")
-        
+
         total_time = time.time() - start_time
         avg_time_per_text = total_time / len(texts) if texts else 0
         logger.info(f"✅ Parallel embedding complete: {len(texts)} texts in {total_time:.2f}s (avg {avg_time_per_text:.3f}s per text)")
-        
+
         return embeddings
 
     def tokenize_texts(self, texts: list[str]) -> list[list[int]]:

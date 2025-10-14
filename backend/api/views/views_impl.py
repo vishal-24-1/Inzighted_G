@@ -5,19 +5,19 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 import sentry_sdk
 import logging
-from .serializers import (
+from ..serializers import (
     RagQuerySerializer, DocumentIngestSerializer, 
     UserRegistrationSerializer, UserLoginSerializer, 
     UserProfileSerializer, DocumentSerializer,
     ChatSessionSerializer, ChatSessionListSerializer, ChatMessageSerializer,
     GoogleAuthSerializer
 )
-from .rag_ingestion import ingest_document, ingest_document_from_s3
-from .rag_query import query_rag, generate_tutoring_question
-from .models import User, Document, ChatSession, ChatMessage, SessionInsight, TutoringQuestionBatch
-from .s3_storage import s3_storage
-from .gemini_client import gemini_client
-from .tasks import process_document
+from ..rag_ingestion import ingest_document, ingest_document_from_s3
+from ..rag_query import query_rag, generate_tutoring_question
+from ..models import User, Document, ChatSession, ChatMessage, SessionInsight, TutoringQuestionBatch
+from ..s3_storage import s3_storage
+from ..gemini_client import gemini_client
+from ..tasks import process_document
 import os
 import tempfile
 
@@ -728,7 +728,7 @@ class TutoringSessionStartView(APIView):
             )
             
             # Use NEW Tanglish Agent to generate structured questions
-            from .agent_flow import TutorAgent
+            from ..agent_flow import TutorAgent
             agent = TutorAgent(session)
             
             # Get first question from structured batch
@@ -804,8 +804,8 @@ class TutoringSessionAnswerView(APIView):
                 )
             
             # Use NEW Tanglish Agent for intent classification and evaluation
-            from .agent_flow import TutorAgent
-            from .models import QuestionItem
+            from ..agent_flow import TutorAgent
+            from ..models import QuestionItem
             
             agent = TutorAgent(session)
             
@@ -959,7 +959,7 @@ class TutoringSessionEndView(APIView):
 
             # Auto-generate insights for this session
             try:
-                from .insight_generator import generate_insights_for_session
+                from api.insight_generator import generate_insights_for_session
                 insight = generate_insights_for_session(str(session.id))
                 
                 insights_generated = insight is not None
@@ -1028,7 +1028,7 @@ class SessionInsightsView(APIView):
             except SessionInsight.DoesNotExist:
                 # Try to generate insights if they don't exist
                 try:
-                    from .insight_generator import generate_insights_for_session
+                    from api.insight_generator import generate_insights_for_session
                     insight = generate_insights_for_session(str(session.id))
                     
                     if not insight:

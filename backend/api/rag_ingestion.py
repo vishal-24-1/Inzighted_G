@@ -9,6 +9,7 @@ import docx
 from pypdf import PdfReader
 import tempfile
 import sentry_sdk
+import unicodedata
 
 # Try to import pdfplumber as a fallback for better PDF text extraction
 try:
@@ -369,6 +370,48 @@ def chunk_text(text: str, chunk_size: int = 400, overlap: int = 50) -> list[str]
         start += chunk_size - overlap
     return chunks
 
+
+def clean_text_for_upsert(s: str, max_len: int = 1000) -> str:
+    """
+    Clean text to be safely included in JSON metadata for Pinecone upserts.
+
+    - Normalize to NFC
+    - Remove unpaired surrogate codepoints (0xD800-0xDFFF)
+    - Remove control characters except tab/newline/carriage-return
+    - Encode/decode with 'replace' to ensure valid UTF-8
+    - Truncate to max_len
+    """
+    if not s:
+        return ""
+
+    try:
+        s = unicodedata.normalize('NFC', s)
+    except Exception:
+        # If normalization fails, fall back to original
+        pass
+
+    filtered_chars = []
+    for ch in s:
+        cp = ord(ch)
+        # Skip surrogate codepoints
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        # Remove control characters except newline/tab/carriage return
+        if cp < 32 and ch not in ('\n', '\r', '\t'):
+            continue
+        filtered_chars.append(ch)
+
+    safe = ''.join(filtered_chars)
+
+    # Ensure valid UTF-8 by replace-on-encode, then truncate
+    try:
+        safe = safe.encode('utf-8', 'replace').decode('utf-8', 'replace')
+    except Exception:
+        # Last-resort fallback: remove any non-ASCII
+        safe = ''.join(ch for ch in safe if ord(ch) < 128)
+
+    return safe[:max_len]
+
 def chunk_pages_to_chunks(pages: list[str], chunk_size: int = 1000, overlap: int = 100) -> list[tuple[str, int]]:
     """
     LEGACY: Converts pages to chunks with page metadata.
@@ -421,7 +464,15 @@ def get_spacy_nlp():
         try:
             # Only load sentence boundary detector to save memory
             _spacy_nlp = spacy.load(model_name, disable=["ner", "tagger", "parser", "lemmatizer"])
-            print(f"✅ Loaded spaCy model: {model_name}")
+            # Ensure a lightweight sentencizer is present so doc.sents works even when parser is disabled
+            if "sentencizer" not in _spacy_nlp.pipe_names:
+                try:
+                    _spacy_nlp.add_pipe("sentencizer")
+                    print(f"✅ Added sentencizer to spaCy pipeline for model: {model_name}")
+                except Exception:
+                    print(f"Warning: could not add sentencizer to spaCy model: {model_name}")
+            else:
+                print(f"✅ Loaded spaCy model: {model_name} (sentencizer present)")
         except OSError:
             raise ImportError(f"spaCy model '{model_name}' not found. Install with: python -m spacy download {model_name}")
     
@@ -710,6 +761,7 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
         # Find the corresponding page number for this chunk
         page_number = chunks_with_pages[i][1] if i < len(chunks_with_pages) else 1
         
+        safe_text = clean_text_for_upsert(chunk, max_len=1000)
         vectors.append({
             'id': f"{tenant_tag}:{source_doc_id}:{i}",  # Deterministic ID
             'values': embeddings[i], # Gemini API returns list directly
@@ -718,7 +770,7 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
                 'source_doc_id': source_doc_id,
                 'chunk_index': i,
                 'page_number': page_number,  # NEW: Include page metadata
-                'text': chunk[:1000],  # Limit metadata text size for Pinecone
+                'text': safe_text,  # Cleaned metadata text for Pinecone
                 's3_key': s3_key
             }
         })
@@ -819,6 +871,7 @@ def ingest_document(file_path: str, user_id: str):
         # Find the corresponding page number for this chunk
         page_number = chunks_with_pages[i][1] if i < len(chunks_with_pages) else 1
         
+        safe_text = clean_text_for_upsert(chunk, max_len=1000)
         vectors.append({
             'id': f"{tenant_tag}:{source_doc_id}:{i}",  # Deterministic ID
             'values': embeddings[i], # Gemini API returns list directly
@@ -827,7 +880,7 @@ def ingest_document(file_path: str, user_id: str):
                 'source_doc_id': source_doc_id,
                 'chunk_index': i,
                 'page_number': page_number,  # NEW: Include page metadata
-                'text': chunk[:1000],  # Limit metadata text size for Pinecone
+                'text': safe_text,  # Cleaned metadata text for Pinecone
             }
         })
 
