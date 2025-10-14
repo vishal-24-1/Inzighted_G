@@ -238,3 +238,41 @@ TANGLISH_STYLE_RULES = """
 - Keep responses concise and context-grounded.
 - Enable language toggle between Tanglish and English when requested.
 """
+
+
+# Common gamification wrappers that some generators may prepend (kept for reference)
+GAMIFICATION_WRAPPERS = [
+    "Quick Round:",
+    "Challenge:",
+    "Explain:",
+    "Think:",
+    "Debate:"
+]
+
+
+def strip_gamification_prefix(text: str) -> str:
+    """Remove common gamification prefixes such as 'Explain:', 'Debate:', etc.
+
+    This is a defensive client-side sanitizer. It strips these prefixes if they
+    appear at the start of the LLM output, preserving the rest of the text.
+    """
+    if not text:
+        return text
+
+    s = text.lstrip()  # remove leading whitespace
+    for prefix in GAMIFICATION_WRAPPERS:
+        if s.startswith(prefix):
+            # remove the prefix and any following whitespace or punctuation
+            stripped = s[len(prefix):].lstrip(' \t\n:-')
+            return stripped
+
+    # Also handle cases where wrapper is in the first line followed by newline
+    first_line_end = s.find('\n')
+    if first_line_end != -1:
+        first_line = s[:first_line_end]
+        for prefix in GAMIFICATION_WRAPPERS:
+            if first_line.startswith(prefix):
+                stripped_first = first_line[len(prefix):].lstrip(' \t\n:-')
+                return stripped_first + s[first_line_end:]
+
+    return text

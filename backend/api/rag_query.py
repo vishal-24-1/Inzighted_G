@@ -2,6 +2,7 @@ from django.conf import settings
 from .auth import get_tenant_tag
 from .rag_ingestion import initialize_pinecone, get_embedding_client
 from .gemini_client import gemini_client
+from .tanglish_prompts import strip_gamification_prefix
 from .models import Document, TutoringQuestionBatch, ChatSession
 import json
 import sentry_sdk
@@ -246,7 +247,7 @@ def generate_question_batch_for_session(session_id: str, document_id: str = None
                 valid_questions = []
                 for q in questions_list:
                     if isinstance(q, str) and q.strip() and len(q.strip()) > 10:
-                        valid_questions.append(q.strip())
+                        valid_questions.append(strip_gamification_prefix(q.strip()))
                 
                 if len(valid_questions) < total_questions // 2:  # At least half the requested questions
                     raise ValueError(f"Only got {len(valid_questions)} valid questions, expected {total_questions}")
@@ -271,7 +272,7 @@ def generate_question_batch_for_session(session_id: str, document_id: str = None
                 if len(questions_list) < 3:  # Minimum threshold
                     raise Exception("Could not extract valid questions from LLM response")
                 
-                questions_list = questions_list[:total_questions]
+                questions_list = [strip_gamification_prefix(q) for q in questions_list[:total_questions]]
             
             print(f"Successfully generated {len(questions_list)} questions")
             
@@ -636,7 +637,6 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
         fallback_prompt = (
             "You are a helpful educational assistant. The user has asked a question but no relevant content was found in their uploaded documents.\n"
             "Provide a helpful, educational answer based on your general knowledge. Keep the response concise and informative.\n"
-            "Mention that this answer is based on general knowledge since no specific content was found in their documents.\n\n"
             "QUESTION: {query}\n\n"
             "Provide a helpful answer:"
         )
@@ -653,7 +653,7 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
             
             # Add a note that this is general knowledge
             if fallback_response and not fallback_response.startswith("Error:"):
-                return f"{fallback_response}\n\n(Note: This answer is based on general knowledge as no specific content was found in your uploaded documents.)"
+                return strip_gamification_prefix(fallback_response)
             else:
                 return "I could not find any relevant information in your documents to answer this question, and I'm having trouble accessing general knowledge at the moment."
                 
@@ -721,7 +721,6 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
             fallback_prompt = (
                 "You are a helpful educational assistant. The user has asked a question but the specific content in their documents doesn't contain the answer.\n"
                 "Provide a helpful, educational answer based on your general knowledge. Keep the response concise and informative.\n"
-                "Mention that this answer is based on general knowledge since the specific information wasn't found in their documents.\n\n"
                 "QUESTION: {query}\n\n"
                 "Provide a helpful answer:"
             )
@@ -734,15 +733,15 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
                 
                 if fallback_response and not fallback_response.startswith("Error:"):
                     print("General knowledge fallback successful.")
-                    return f"{fallback_response}\n\n(Note: This answer is based on general knowledge as the specific information wasn't found in your uploaded documents.)"
+                    return strip_gamification_prefix(fallback_response)
                 else:
-                    return llm_response  # Return original "I don't know" response
+                    return strip_gamification_prefix(llm_response)  # Return original "I don't know" response
                     
             except Exception as fb_error:
                 print(f"Error in general knowledge fallback: {fb_error}")
                 return llm_response  # Return original response
         
-        return llm_response
+        return strip_gamification_prefix(llm_response)
         
     except Exception as e:
         print(f"Error calling Gemini LLM: {e}")

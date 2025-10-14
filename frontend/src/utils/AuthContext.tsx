@@ -7,12 +7,14 @@ interface User {
   username: string;
   name: string;
   created_at: string;
+  preferred_language?: string;
 }
 
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<void>;
-  register: (email: string, username: string, name: string, password: string, password_confirm: string) => Promise<void>;
+  register: (email: string, username: string, name: string, password: string, password_confirm: string, preferred_language?: string) => Promise<void>;
+  updateProfile?: (data: any) => Promise<void>;
   googleLogin: (credential: string) => Promise<void>;
   logout: () => void;
   loading: boolean;
@@ -64,8 +66,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setUser(user);
   };
 
-  const register = async (email: string, username: string, name: string, password: string, password_confirm: string) => {
-    const response = await authAPI.register(email, username, name, password, password_confirm);
+  const register = async (email: string, username: string, name: string, password: string, password_confirm: string, preferred_language?: string) => {
+    const response = await authAPI.register(email, username, name, password, password_confirm, preferred_language);
     const { user, access, refresh } = response.data;
     
     localStorage.setItem('access_token', access);
@@ -82,6 +84,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     setUser(user);
   };
 
+  const updateProfile = async (data: any) => {
+    const response = await authAPI.updateProfile(data);
+    setUser(response.data);
+  };
+
   const logout = () => {
     localStorage.removeItem('access_token');
     localStorage.removeItem('refresh_token');
@@ -95,6 +102,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     googleLogin,
     logout,
     loading,
+    updateProfile,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

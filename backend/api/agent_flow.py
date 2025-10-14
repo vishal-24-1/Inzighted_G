@@ -7,6 +7,7 @@ from .models import ChatSession, ChatMessage, QuestionItem, EvaluatorResult, Tut
 from .gemini_client import gemini_client
 from .rag_ingestion import initialize_pinecone, get_embedding_client
 from .auth import get_tenant_tag
+from .tanglish_prompts import strip_gamification_prefix
 import logging
 import sentry_sdk
 import uuid
@@ -269,6 +270,68 @@ class TutorAgent:
             content=user_message,
             is_user_message=True
         )
+        # --- If previous bot message asked to proceed, handle confirmation here ---
+        ASK_SENTINEL = '[ASK_TO_PROCEED]'
+        try:
+            last_bot = ChatMessage.objects.filter(session=self.session, is_user_message=False).order_by('-created_at').first()
+        except Exception:
+            last_bot = None
+
+        if last_bot and last_bot.content and ASK_SENTINEL in last_bot.content:
+            # Interpret user's reply as confirmation/clarification
+            print(f"[AGENT] Detected ASK_TO_PROCEED sentinel in last bot message")
+            reply = (user_message or '').strip().lower()
+            
+            if reply in ('yes', 'y', 'sure', 'ok', 'continue', 'proceed'):
+                print(f"[AGENT] User confirmed to proceed")
+                # Advance to next question
+                has_more = self.advance_to_next_question()
+                if has_more:
+                    next_q_text, next_q_item = self.get_next_question()
+                    return {
+                        "reply": "Okay — moving to the next question.",
+                        "next_question": next_q_text,
+                        "session_complete": False,
+                        "evaluation": None
+                    }
+                else:
+                    # No more questions
+                    self._generate_session_insights()
+                    return {
+                        "reply": "Great job! You've completed all questions. 🎉",
+                        "next_question": None,
+                        "session_complete": True,
+                        "evaluation": None
+                    }
+
+            if reply in ('no', 'n', 'not now', 'later'):
+                print(f"[AGENT] User declined to proceed")
+                return {
+                    "reply": "Okay — what else would you like me to clarify on this question?",
+                    "next_question": None,
+                    "session_complete": False,
+                    "evaluation": None
+                }
+            
+            # User asked another follow-up question - answer it and ask to proceed again
+            print(f"[AGENT] User asked follow-up question, will answer and ask to proceed again")
+            try:
+                clarification_reply = self._answer_user_question_with_rag(user_message, current_question_item)
+            except Exception as e:
+                logger.error(f"[AGENT] Error answering follow-up question: {e}")
+                clarification_reply = "Sorry, I couldn't fetch an answer right now."
+            
+            # Always append proceed prompt for follow-up questions
+            proceed_prompt = "\n\nShall we proceed to the next question? Reply 'yes' to continue, or ask another question if you need more clarification."
+            sentinel = "\n[ASK_TO_PROCEED]"
+            full_reply = clarification_reply + proceed_prompt + sentinel
+            
+            return {
+                "reply": full_reply,
+                "next_question": None,
+                "session_complete": False,
+                "evaluation": None
+            }
         
         # § 1.4 — Classify intent using Gemini
         print(f"[AGENT] Calling intent classifier...")
@@ -350,7 +413,7 @@ class TutorAgent:
         logger.info("Handling MIXED flow")
         
         # First, answer the follow-up question part using RAG
-        followup_reply = self._answer_user_question_with_rag(user_message)
+        followup_reply = self._answer_user_question_with_rag(user_message, question_item, user_message)
         
         # Then evaluate the answer portion
         # For MIXED messages, the whole message is treated as the answer for evaluation
@@ -380,40 +443,38 @@ class TutorAgent:
     def _handle_return_question(self, user_message: str, question_item: QuestionItem, user_msg_record: ChatMessage) -> dict:
         """
         Handle RETURN_QUESTION flow
-        User asked a question instead of answering - answer their question then move to next question
+        User asked a question instead of answering - answer their question, then ask if they want to proceed
         """
         print(f"\n[AGENT] === RETURN_QUESTION Flow ===")
         print(f"[AGENT] User asked: {user_message[:80]}...")
         
         # Answer the user's question using RAG
         print(f"[AGENT] Calling RAG to answer user's question...")
-        clarification_reply = self._answer_user_question_with_rag(user_message)
-        print(f"[AGENT] RAG reply length: {len(clarification_reply)} chars")
-        print(f"[AGENT] RAG reply preview: {clarification_reply[:150]}...")
+        try:
+            clarification_reply = self._answer_user_question_with_rag(user_message, question_item)
+            print(f"[AGENT] RAG reply length: {len(clarification_reply)} chars")
+            print(f"[AGENT] RAG reply preview: {clarification_reply[:150]}...")
+        except Exception as e:
+            # Don't let RAG/LLM exceptions crash the tutoring flow — fall back to a safe message
+            logger.error(f"[AGENT] Error while answering user question with RAG: {e}")
+            try:
+                sentry_sdk.capture_exception(e)
+            except Exception:
+                pass
+            clarification_reply = "Sorry, I couldn't fetch an answer right now."
         
-        # Move to next question (as per requirement)
-        has_more = self.advance_to_next_question()
+        # Instead of auto-advancing, ask the user if they want to proceed
+        proceed_prompt = "\n\nShall we proceed to the next question? Reply 'yes' to continue, or ask another question if you need more clarification."
+        sentinel = "\n[ASK_TO_PROCEED]"
+        full_reply = clarification_reply + proceed_prompt + sentinel
         
-        if has_more:
-            next_q_text, next_q_item = self.get_next_question()
-            print(f"[AGENT] ✅ Returning reply + next question\n")
-            return {
-                "reply": clarification_reply,
-                "next_question": next_q_text,
-                "next_question_item": next_q_item,
-                "session_complete": False,
-                "evaluation": None  # No evaluation for questions
-            }
-        else:
-            # All questions exhausted
-            self._generate_session_insights()
-            print(f"[AGENT] ✅ Session complete, returning reply\n")
-            return {
-                "reply": clarification_reply + "\n\nGreat job! You've completed all questions. 🎉",
-                "next_question": None,
-                "session_complete": True,
-                "evaluation": None
-            }
+        print(f"[AGENT] ✅ Returning reply with proceed prompt (no auto-advance)\n")
+        return {
+            "reply": full_reply,
+            "next_question": None,
+            "session_complete": False,
+            "evaluation": None
+        }
     
     def _evaluate_answer(self, student_answer: str, question_item: QuestionItem, user_msg_record: ChatMessage) -> EvaluatorResult:
         """
@@ -471,17 +532,21 @@ class TutorAgent:
             )
             return evaluator_result
     
-    def _answer_user_question_with_rag(self, user_message: str) -> str:
+    def _answer_user_question_with_rag(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None) -> str:
         """
         Answer user's question using RAG (Retrieval Augmented Generation).
         Uses the document context to answer the user's question in Tanglish style.
+        Now includes session Q&A context for better responses.
         """
         try:
-            # Use RAG to answer the user's question
+            # Build context with current question/answer and session history
+            context_prompt = self._build_session_context(user_message, current_question_item, student_answer)
+            
+            # Use RAG to answer the user's question with context
             from .rag_query import query_rag
             
-            logger.info(f"[RAG] Answering user question using RAG: {user_message[:50]}...")
-            rag_response = query_rag(self.user_id, user_message)
+            logger.info(f"[RAG] Answering user question with session context: {user_message[:50]}...")
+            rag_response = query_rag(self.user_id, context_prompt)
             logger.info(f"[RAG] Raw response length: {len(rag_response)} chars, preview: {rag_response[:100]}...")
             
             # Check if RAG returned general knowledge fallback (contains the note)
@@ -506,7 +571,8 @@ class TutorAgent:
                     f"Original answer:\n{rag_response}\n\n"
                     f"Tanglish version (provide the answer):"
                 )
-                rag_response = gemini_client.generate_response(summary_prompt, max_tokens=200)
+                tmp_resp = gemini_client.generate_response(summary_prompt, max_tokens=200)
+                rag_response = strip_gamification_prefix(tmp_resp)
                 logger.info(f"[RAG] Tanglish summary: {rag_response[:100]}...")
             
             # If the RAG response contains prompting language (asking user to try/answer),
@@ -528,7 +594,7 @@ class TutorAgent:
                 try:
                     rewritten = gemini_client.generate_response(rewrite_prompt, max_tokens=200)
                     if rewritten:
-                        rag_response = rewritten.strip()
+                        rag_response = strip_gamification_prefix(rewritten.strip())
                         logger.info(f"[RAG] Rewrote prompting output into direct answer: {rag_response[:120]}...")
                 except Exception as e:
                     logger.warning(f"[RAG] Failed to rewrite prompting output: {e}")
@@ -545,7 +611,55 @@ class TutorAgent:
                 return "Good question! Let me help: focus on the key concepts from your document. Try your best to answer based on what you've learned."
             else:
                 return "I see. Let's continue with the next question."
-                return "I see. Let's continue with the next question."
+    
+    def _build_session_context(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None, max_chars: int = 8000) -> str:
+        """
+        Build context prompt including current question/answer and all session Q&A history.
+        """
+        context_parts = []
+        
+        # Add current question context if available
+        if current_question_item:
+            context_parts.append(f"CURRENT QUESTION: {current_question_item.question_text}")
+            if student_answer:
+                context_parts.append(f"STUDENT'S ANSWER: {student_answer}")
+        
+        # Get all Q&A history from this session
+        try:
+            evaluations = EvaluatorResult.objects.filter(
+                message__session=self.session
+            ).select_related('question', 'message').order_by('created_at')
+            
+            if evaluations.exists():
+                context_parts.append("\nSESSION Q&A HISTORY:")
+                for eval_result in evaluations:
+                    if eval_result.question and eval_result.message:
+                        qa_entry = f"Q: {eval_result.question.question_text[:150]}"
+                        qa_entry += f"\nA: {eval_result.message.content[:150]}"
+                        qa_entry += f" [Score: {eval_result.score:.2f}, XP: {eval_result.xp}]"
+                        context_parts.append(qa_entry)
+        except Exception as e:
+            logger.warning(f"Could not fetch session history: {e}")
+        
+        # Combine all context
+        full_context = "\n\n".join(context_parts)
+        
+        # Add the user's current question
+        if full_context:
+            combined_prompt = f"{full_context}\n\nUSER'S QUESTION: {user_message}"
+        else:
+            combined_prompt = user_message
+        
+        # Truncate if too long
+        if len(combined_prompt) > max_chars:
+            # Keep user question and truncate history
+            user_part = f"\n\nUSER'S QUESTION: {user_message}"
+            available_chars = max_chars - len(user_part) - 100  # Buffer
+            truncated_context = full_context[:available_chars] + "...[truncated]"
+            combined_prompt = f"{truncated_context}{user_part}"
+        
+        logger.info(f"[CONTEXT] Built context prompt: {len(combined_prompt)} chars")
+        return combined_prompt
     
     def _generate_session_insights(self):
         """
@@ -573,7 +687,6 @@ class TutorAgent:
             # Calculate session XP as: (average XP per answered question * accuracy%) / 100
             # - avg_xp: mean of EvaluatorResult.xp across attended evaluations
             # - session_xp = (avg_xp * accuracy) / 100
-            # Store as integer XP points (rounded)
             sum_xp = 0
             for ev in evaluations:
                 # ensure xp is numeric; default to 0 if missing

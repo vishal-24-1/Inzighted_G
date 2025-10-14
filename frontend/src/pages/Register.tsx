@@ -18,6 +18,7 @@ const RegisterForm: React.FC = () => {
     name: '',
     password: '',
     password_confirm: '',
+    preferred_language: 'tanglish',
   });
   const [formErrors, setFormErrors] = useState<ApiErrorPayload>({});
   const [loading, setLoading] = useState(false);
@@ -53,7 +54,8 @@ const RegisterForm: React.FC = () => {
         formData.username,
         formData.name,
         formData.password,
-        formData.password_confirm
+        formData.password_confirm,
+        formData.preferred_language,
       );
       navigate('/');
     } catch (err: any) {
@@ -102,7 +104,7 @@ const RegisterForm: React.FC = () => {
   const nonFieldError = getFirstError('non_field_errors');
 
   const inputClassName = (hasError: boolean) =>
-    `transition-all duration-200 h-12 rounded-xl w-full px-4 text-base border focus:outline-none focus:ring-2 ${hasError
+    `transition-all duration-200 h-14 md:h-12 rounded-xl w-full px-4 text-base border focus:outline-none focus:ring-2 ${hasError
       ? 'border-red-300 bg-red-50 focus:border-red-500 focus:ring-red-200'
       : 'border-gray-200 focus:border-blue-500 focus:ring-blue-200'
     }`;
@@ -112,6 +114,7 @@ const RegisterForm: React.FC = () => {
       <form
         onSubmit={handleSubmit}
         className="space-y-4 w-full p-6 pb-6 pt-8 bg-white rounded-t-2xl shadow-lg md:rounded-2xl md:mx-4 md:px-6 md:py-8"
+        style={{ maxHeight: '85vh', overflowY: 'auto', WebkitOverflowScrolling: 'touch' }}
       >
         <div className="space-y-1 items-center text-center text-sm text-gray-600">
           <img src={LogoImg} alt="Logo" className="h-6 mx-auto mb-2" />
@@ -221,10 +224,26 @@ const RegisterForm: React.FC = () => {
           )}
         </div>
 
+        <div className="space-y-1">
+          <label htmlFor="preferred_language" className="text-sm font-medium text-gray-700">
+            Preferred Language
+          </label>
+          <select
+            id="preferred_language"
+            name="preferred_language"
+            value={formData.preferred_language}
+            onChange={(e) => setFormData((prev) => ({ ...prev, preferred_language: e.target.value }))}
+            className={`${inputClassName(Boolean(getFirstError('preferred_language')))} h-14`}
+          >
+            <option value="tanglish">Tanglish</option>
+            <option value="english">English</option>
+          </select>
+        </div>
+
         <button
           type="submit"
           disabled={isLoading}
-          className="w-full rounded-xl h-12 bg-blue-600 text-white font-medium transition-transform duration-150 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed"
+          className="w-full rounded-xl h-14 md:h-12 bg-blue-600 text-white font-medium transition-transform duration-150 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 disabled:opacity-60 disabled:cursor-not-allowed"
         >
           {isLoading ? 'Creating Profile...' : 'Create Profile'}
         </button>

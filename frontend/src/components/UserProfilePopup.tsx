@@ -8,6 +8,7 @@ interface UserProfilePopupProps {
 
 const UserProfilePopup: React.FC<UserProfilePopupProps> = ({ onClose }) => {
   const { user, logout } = useAuth();
+  const { updateProfile } = useAuth();
 
   const handleLogout = () => {
     onClose();
@@ -57,11 +58,30 @@ const UserProfilePopup: React.FC<UserProfilePopupProps> = ({ onClose }) => {
               </div>
             </div>
           </div>
+          <div className="mt-3">
+            <div className="text-xs text-gray-500">Preferred language</div>
+            <div className="text-sm text-gray-700">{user?.preferred_language ? (user.preferred_language === 'tanglish' ? 'Tanglish' : 'English') : 'Tanglish'}</div>
+          </div>
         </div>
 
-        <div className="mt-6">
+        <div className="mt-4 flex gap-2">
           <button
-            className="w-full bg-red-600 text-white py-2 rounded-lg inline-flex items-center justify-center gap-2"
+            className="flex-1 bg-white border border-gray-200 text-gray-700 py-2 rounded-lg"
+            onClick={() => {
+              // open a simple edit modal/flow: use browser prompt for minimal change
+              const choice = window.prompt('Preferred language (tanglish / english):', user?.preferred_language || 'tanglish');
+              if (choice && (choice === 'tanglish' || choice === 'english')) {
+                updateProfile && updateProfile({ preferred_language: choice });
+              } else if (choice) {
+                alert('Invalid choice. Use "tanglish" or "english"');
+              }
+            }}
+          >
+            Edit Profile
+          </button>
+
+          <button
+            className="flex-1 bg-red-600 text-white py-2 rounded-lg inline-flex items-center justify-center gap-2"
             onClick={handleLogout}
           >
             <LogOut className="h-4 w-4" />

@@ -17,6 +17,18 @@ class User(AbstractUser):
     google_access_token = models.TextField(null=True, blank=True, help_text="Google OAuth access token")
     google_refresh_token = models.TextField(null=True, blank=True, help_text="Google OAuth refresh token")
     is_google_user = models.BooleanField(default=False, help_text="Whether user signed up via Google")
+
+    # Preferred language for responses (frontend dropdown). Keep choices small for now.
+    PREFERRED_LANGUAGE_CHOICES = [
+        ('english', 'English'),
+        ('tanglish', 'Tanglish'),
+    ]
+    preferred_language = models.CharField(
+        max_length=32,
+        choices=PREFERRED_LANGUAGE_CHOICES,
+        default='tanglish',
+        help_text='User preferred language for tutoring responses',
+    )
     
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username', 'name']

@@ -2,6 +2,10 @@ from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from .models import User, Document, ChatSession, ChatMessage
+import logging
+from django.db import DatabaseError, IntegrityError
+
+logger = logging.getLogger(__name__)
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, validators=[validate_password])
@@ -9,17 +13,68 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = User
-        fields = ('email', 'username', 'name', 'password', 'password_confirm')
+        fields = ('email', 'username', 'name', 'password', 'password_confirm', 'preferred_language')
     
     def validate(self, attrs):
-        if attrs['password'] != attrs['password_confirm']:
+        pwd = attrs.get('password')
+        pwd_confirm = attrs.get('password_confirm')
+        if not pwd or not pwd_confirm:
+            raise serializers.ValidationError("Password and password_confirm are required")
+        if pwd != pwd_confirm:
             raise serializers.ValidationError("Passwords don't match")
         return attrs
     
     def create(self, validated_data):
-        validated_data.pop('password_confirm')
-        user = User.objects.create_user(**validated_data)
-        return user
+        # Extract known fields safely
+        validated_data.pop('password_confirm', None)
+        password = validated_data.pop('password', None)
+        preferred_language = validated_data.pop('preferred_language', None)
+
+        email = validated_data.get('email')
+        username = validated_data.get('username')
+        name = validated_data.get('name')
+
+        # Normalize and infer missing username from email
+        if email:
+            email = email.strip().lower()
+        if not username and email:
+            username = email.split('@')[0]
+
+        if not email or not password:
+            raise serializers.ValidationError('Email and password are required')
+
+        try:
+            # Use create_user to ensure password hashing and user manager logic
+            user = User.objects.create_user(email=email, username=username, password=password)
+            # Set optional fields that create_user may not accept
+            if name:
+                user.name = name
+            if preferred_language:
+                try:
+                    user.preferred_language = preferred_language
+                    user.save()
+                except DatabaseError as db_err:
+                    # If DB schema not updated yet, log and continue without failing registration
+                    logger.warning("Could not save preferred_language (migration missing?): %s", db_err)
+                    # Attempt to save without preferred_language to ensure user exists
+                    try:
+                        user.save(update_fields=[f for f in ['name'] if getattr(user, 'name', None)])
+                    except Exception:
+                        # fallback to full save if update_fields not possible
+                        try:
+                            user.save()
+                        except Exception:
+                            pass
+            else:
+                user.save()
+            return user
+        except IntegrityError as ie:
+            logger.warning("IntegrityError creating user: %s", ie)
+            raise serializers.ValidationError({'non_field_errors': 'A user with that email or username already exists.'})
+        except Exception as e:
+            # Convert to serializer validation error so DRF returns 400 instead of 500
+            logger.exception("Error creating user: %s", e)
+            raise serializers.ValidationError({'non_field_errors': str(e)})
 
 class UserLoginSerializer(serializers.Serializer):
     email = serializers.EmailField()
@@ -44,8 +99,28 @@ class UserLoginSerializer(serializers.Serializer):
 class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ('id', 'email', 'username', 'name', 'created_at')
+        fields = ('id', 'email', 'username', 'name', 'created_at', 'preferred_language')
         read_only_fields = ('id', 'created_at')
+
+    def update(self, instance, validated_data):
+        # Update fields safely and handle DB errors for optional fields
+        preferred_language = validated_data.pop('preferred_language', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        try:
+            if preferred_language is not None:
+                instance.preferred_language = preferred_language
+            instance.save()
+        except DatabaseError as db_err:
+            logger.warning("Could not update preferred_language (migration missing?): %s", db_err)
+            # attempt to save other fields only
+            try:
+                instance.save(update_fields=[k for k in validated_data.keys() if hasattr(instance, k)])
+            except Exception:
+                pass
+
+        return instance
 
 class GoogleAuthSerializer(serializers.Serializer):
     """
