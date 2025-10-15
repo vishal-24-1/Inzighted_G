@@ -47,7 +47,9 @@ class ChatBotView(APIView):
 				return session
 			except ChatSession.DoesNotExist:
 				pass
-		return ChatSession.objects.create(user=user)
+		# Use user's preferred language when creating new session, fallback to 'tanglish'
+		language = getattr(user, 'preferred_language', 'tanglish')
+		return ChatSession.objects.create(user=user, language=language)
 
 
 class ChatSessionListView(APIView):

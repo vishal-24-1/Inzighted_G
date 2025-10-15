@@ -36,6 +36,8 @@ class TutorAgent:
         self.user = session.user
         self.user_id = str(self.user.id)
         self.tenant_tag = get_tenant_tag(self.user_id)
+        # Get language preference from user, fallback to session language, then 'tanglish'
+        self.language = getattr(self.user, 'preferred_language', None) or self.session.language or 'tanglish'
     
     def get_or_create_question_batch(self) -> TutoringQuestionBatch:
         """
@@ -59,8 +61,8 @@ class TutorAgent:
             if not context:
                 raise ValueError("No document context available")
             
-            # Generate structured questions using Gemini
-            questions_data = gemini_client.generate_questions_structured(context, total_questions=10)
+            # Generate structured questions using Gemini with user's language preference
+            questions_data = gemini_client.generate_questions_structured(context, total_questions=10, language=self.language)
             
             if not questions_data:
                 raise ValueError("Failed to generate questions")
@@ -333,9 +335,9 @@ class TutorAgent:
                 "evaluation": None
             }
         
-        # § 1.4 — Classify intent using Gemini
+        # § 1.4 — Classify intent using Gemini with user's language preference
         print(f"[AGENT] Calling intent classifier...")
-        classifier_token = gemini_client.classify_intent(user_message)
+        classifier_token = gemini_client.classify_intent(user_message, language=self.language)
         print(f"[AGENT] ✅ Intent classified as: {classifier_token}\n")
         
         # Update message with classifier token
@@ -485,11 +487,12 @@ class TutorAgent:
             # Build context for evaluation
             context = f"Question: {question_item.question_text}\nExpected: {question_item.expected_answer}"
             
-            # Call Gemini evaluator
+            # Call Gemini evaluator with user's language preference
             eval_dict = gemini_client.evaluate_answer(
                 context=context,
                 expected_answer=question_item.expected_answer,
-                student_answer=student_answer
+                student_answer=student_answer,
+                language=self.language
             )
             
             # Create EvaluatorResult record
@@ -706,14 +709,16 @@ class TutorAgent:
             for eval_result in evaluations:
                 qa_records.append({
                     "question": eval_result.question.question_text if eval_result.question else "N/A",
+                    "expected_answer": eval_result.question.expected_answer if eval_result.question else "N/A",
                     "answer": eval_result.message.content if eval_result.message else "N/A",
+                    "explanation": eval_result.explanation if eval_result.explanation else "",
                     "score": eval_result.score,
                     "xp": eval_result.xp,
                     "correct": eval_result.correct
                 })
             
-            # Call Gemini for BoostMe insights (3 zones)
-            boostme_insights = gemini_client.generate_boostme_insights(qa_records)
+            # Call Gemini for BoostMe insights (3 zones) with user's language preference
+            boostme_insights = gemini_client.generate_boostme_insights(qa_records, language=self.language)
             
             # Create or update SessionInsight record
             from .models import SessionInsight

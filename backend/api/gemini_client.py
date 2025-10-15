@@ -386,103 +386,29 @@ class GeminiLLMClient:
         Returns:
             List of token ID lists for each text
         """
-        use_gemini = getattr(settings, 'RAG_USE_GEMINI_TOKENIZER', True)
-        
-        if use_gemini and self.api_key:
+        # Prefer local tokenization using tiktoken for performance and determinism.
+        # Keep the API stable so callers (including count_tokens) continue to work.
+        if not texts:
+            return []
+
+        if HAS_TIKTOKEN:
             try:
-                return self._tokenize_with_gemini(texts)
+                enc = tiktoken.get_encoding("cl100k_base")
+                token_lists = [enc.encode(t) for t in texts]
+                logger.info(f"✅ tiktoken tokenization successful for {len(texts)} texts (fast local)")
+                return token_lists
             except Exception as e:
-                logger.warning(f"Gemini tokenization failed, falling back to tiktoken: {e}")
-        
-        # Fallback to tiktoken
-        return self._tokenize_with_tiktoken(texts)
+                logger.error(f"tiktoken tokenization failed unexpectedly: {e}")
+
+        # Final fallback: whitespace split (keeps token count semantics degraded but functional)
+        logger.warning("tiktoken not available or failed - falling back to whitespace tokenization")
+        return [text.split() for text in texts]
     
-    def _tokenize_with_gemini(self, texts: list[str]) -> list[list[int]]:
-        """
-        Attempt to tokenize using Gemini API.
-        Note: This is a placeholder implementation as Gemini may not expose 
-        a direct tokenization endpoint. We'll use a count-tokens approach.
-        """
-        token_lists = []
-        
-        for text in texts:
-            try:
-                # Use the countTokens endpoint if available
-                url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:countTokens"
-                headers = {'Content-Type': 'application/json'}
-                data = {
-                    "contents": [{
-                        "parts": [{"text": text}]
-                    }]
-                }
-                # Try across available keys
-                params_key = None
-                for _ in range(self.key_manager.total_keys()):
-                    candidate_key = self.key_manager.get_key()
-                    if not candidate_key:
-                        break
-                    params = {'key': candidate_key}
-                    try:
-                        response = requests.post(url, headers=headers, json=data, params=params, timeout=10)
-                        response.raise_for_status()
-
-                        result = response.json()
-                        token_count = result.get('totalTokens', 0)
-                        token_lists.append(list(range(token_count)))
-                        break
-
-                    except requests.exceptions.HTTPError as e:
-                        status = getattr(e.response, 'status_code', None)
-                        if status in (401, 403, 429):
-                            # mark key failed and try next
-                            self.key_manager.mark_key_failed(candidate_key, cooldown_seconds=30)
-                            continue
-                        else:
-                            raise
-                    except requests.exceptions.RequestException:
-                        # try next key
-                        self.key_manager.mark_key_failed(candidate_key, cooldown_seconds=10)
-                        continue
-
-                else:
-                    # No key succeeded for this text - fall back to tiktoken or whitespace
-                    logger.error("Gemini tokenization: no LLM keys succeeded for tokenization request, falling back")
-                    if HAS_TIKTOKEN:
-                        enc = tiktoken.get_encoding("cl100k_base")
-                        token_lists.append(enc.encode(text))
-                    else:
-                        token_lists.append(text.split())
-                
-            except Exception as e:
-                logger.error(f"Gemini tokenization failed for text: {e}")
-                # Fall back to tiktoken for this specific text
-                if HAS_TIKTOKEN:
-                    enc = tiktoken.get_encoding("cl100k_base")
-                    token_lists.append(enc.encode(text))
-                else:
-                    # Last resort: approximate with whitespace
-                    token_lists.append(text.split())
-        
-        logger.info(f"✅ Gemini tokenization successful for {len(texts)} texts")
-        return token_lists
-    
-    def _tokenize_with_tiktoken(self, texts: list[str]) -> list[list[int]]:
-        """
-        Tokenize using tiktoken as fallback.
-        """
-        if not HAS_TIKTOKEN:
-            logger.warning("tiktoken not available, using whitespace approximation")
-            return [text.split() for text in texts]
-        
-        try:
-            enc = tiktoken.get_encoding("cl100k_base")
-            token_lists = [enc.encode(text) for text in texts]
-            logger.info(f"✅ tiktoken tokenization successful for {len(texts)} texts")
-            return token_lists
-        except Exception as e:
-            logger.error(f"tiktoken tokenization failed: {e}")
-            # Final fallback: whitespace split
-            return [text.split() for text in texts]
+    # NOTE: Gemini-based tokenization has been removed in favor of local
+    # tiktoken-based tokenization (faster, deterministic, and no network calls).
+    # The previous implementations that attempted to call Gemini's countTokens
+    # endpoint have been intentionally removed. If needed in future, a true
+    # batched remote tokenizer can be added behind a feature flag.
 
     def count_tokens(self, text: str) -> int:
         """
@@ -501,7 +427,7 @@ class GeminiLLMClient:
     # NEW METHODS FOR TANGLISH AGENT FLOW
     # ============================================================
     
-    def classify_intent(self, user_message: str) -> str:
+    def classify_intent(self, user_message: str, language: str = "tanglish") -> str:
         """
         Classify user intent using Gemini with exact system prompt from spec.
         Returns one token: DIRECT_ANSWER, MIXED, or RETURN_QUESTION.
@@ -513,11 +439,12 @@ class GeminiLLMClient:
         Returns:
             Intent token string
         """
-        from .tanglish_prompts import INTENT_CLASSIFIER_SYSTEM_PROMPT, fallback_intent_classifier
-        
+        from .tanglish_prompts import get_intent_classifier_system_prompt, fallback_intent_classifier
+
         try:
-            # Build prompt
-            prompt = f"{INTENT_CLASSIFIER_SYSTEM_PROMPT}\n\nUSER_MESSAGE: {user_message}\n\nClassify:"
+            # Build prompt using the dynamic intent classifier system prompt
+            system_prompt = get_intent_classifier_system_prompt(language)
+            prompt = f"{system_prompt}\n\nUSER_MESSAGE: {user_message}\n\nClassify:"
             
             print(f"[CLASSIFIER] Prompt: {prompt[:200]}...")
             
@@ -552,7 +479,7 @@ class GeminiLLMClient:
             })
             return fallback_intent_classifier(user_message)
     
-    def generate_questions_structured(self, context: str, total_questions: int = 10) -> list:
+    def generate_questions_structured(self, context: str, total_questions: int = 10, language: str = "tanglish") -> list:
         """
         Generate structured questions using exact system prompt from spec.
         Returns list of question dictionaries with archetype, difficulty, etc.
@@ -568,8 +495,8 @@ class GeminiLLMClient:
         import json
         
         try:
-            # Build prompt with context
-            prompt = build_question_generation_prompt(context, total_questions)
+            # Build prompt with context and language
+            prompt = build_question_generation_prompt(context, total_questions, language)
             
             # Call Gemini
             logger.info(f"Generating {total_questions} structured questions...")
@@ -628,7 +555,7 @@ class GeminiLLMClient:
             })
             return []
     
-    def evaluate_answer(self, context: str, expected_answer: str, student_answer: str) -> dict:
+    def evaluate_answer(self, context: str, expected_answer: str, student_answer: str, language: str = "tanglish") -> dict:
         """
         Evaluate student answer using Gemini Judge with exact system prompt from spec.
         Returns evaluation dict with score, XP, explanation, etc.
@@ -645,8 +572,8 @@ class GeminiLLMClient:
         import json
         
         try:
-            # Build evaluation prompt
-            prompt = build_evaluation_prompt(context, expected_answer, student_answer)
+            # Build evaluation prompt with language
+            prompt = build_evaluation_prompt(context, expected_answer, student_answer, language)
             
             # Call Gemini
             logger.info("Evaluating student answer...")
@@ -796,7 +723,7 @@ class GeminiLLMClient:
                 "threat": "N/A"
             }
     
-    def generate_boostme_insights(self, qa_records: list) -> dict:
+    def generate_boostme_insights(self, qa_records: list, language: str = "tanglish") -> dict:
         """
         Generate BoostMe insights (3 zones) from tutoring session QA records.
         Returns focus_zone, steady_zone, edge_zone as arrays of 2 Tanglish points each.
@@ -809,48 +736,72 @@ class GeminiLLMClient:
         """
         import json
         
-        # System prompt for BoostMe insights
-        system_prompt = """You are an insights-generator for InzightEd-G for Tamil learners. Output JSON only (no commentary).
-Language: Tanglish (Tamil in only Latin letters without tamil alphabets). Keep each point concise (<= 15 words).
+        # System prompt for BoostMe insights (dynamic language)
+        system_prompt = f"""You are an insights-generator for InzightEd-G for learners. Output JSON only (no commentary).
+Language: {language}. Keep each point concise (<= 15 words).
 Produce three zones based on the student's performance. Each zone must be an array of exactly two short points (strings).
 
-{
+You will receive multiple student performance records. Each record will include:
+- Question
+- Expected Answer (ideal reference answer)
+- Student Answer (what the learner wrote)
+- Explanation (LLM Reason for the score given to student answer)
+- Score (numerical performance indicator)
+
+Use all of these fields together to understand the student's thinking. 
+Compare the student answer with the expected answer and explanation to judge reasoning quality. 
+Do not ignore the explanation — use it to find the root cause of mistakes or partial understanding.
+
+From all observations for each zone, internally rank every possible insight based on:
+1. Actionability (how clearly it guides improvement or reinforcement)
+2. Specificity (how precisely it references the concept or skill)
+3. Relevance (how strongly it affects performance)
+
+Only output the TOP TWO strongest insights per zone after ranking.
+
+{{
   "focus_zone": ["point1", "point2"],
   "steady_zone": ["point1", "point2"],
   "edge_zone": ["point1", "point2"]
-}
+}}
 
 ZONE DEFINITIONS & LOGIC
 
 1. focus_zone → Core Weakness / Low Understanding  
-   - Identify clear misunderstanding, wrong reasoning, or concept confusion.  
-   - Highlight the root cause (concept gap, recall issue, or misread question).  
-   - Mention what needs to improve, not just that it’s “wrong.”  
-   - Avoid generic words like “mistake,” “confused,” or “wrong.”  
-   - Output should point to *specific learning gap* mention the specific concept in a deeper sense or topic.  
+    - Identify clear misunderstanding, wrong reasoning, or concept confusion.  
+    - Highlight the root cause (concept gap, recall issue, or misread question).  
+    - Mention what needs to improve, not just that it’s “wrong.”  
+    - Avoid generic words like “mistake,” “confused,” or “wrong.”  
+    - Output should point to *specific learning gap* mention the specific concept in a deeper sense or topic.  
  
 2. steady_zone → Strong / Confident Understanding  
-   - Identify areas where the student showed consistent accuracy or strong reasoning.  
-   - Highlight what they’re doing well — correct logic, structured solving, or recall clarity.  
-   - Encourage retention of these skills.  
-   - Avoid generic praise; focus on *specific strengths* mentioned the specific concept in a deeper sense or topic.  
+    - Identify areas where the student showed consistent accuracy or strong reasoning.  
+    - Highlight what they’re doing well — correct logic, structured solving, or recall clarity.  
+    - Encourage retention of these skills.  
+    - Avoid generic praise; focus on *specific strengths* mentioned the specific concept in a deeper sense or topic.  
  
 3. edge_zone → Growth Potential / Near-Mastery  
-   - Identify areas where the student was almost correct or partially right.  
-   - Logic or approach is right, but minor slip or clarity issue exists.  
-   - Show how a small fix leads to full mastery.  
-   - Tone should be positive and motivating.
-   - Avoid generic phrases, be specific and mention the concept in a deeper sense or topic.
-Each point should be in Tanglish and <= 15 words."""
+    - Identify areas where the student was almost correct or partially right.  
+    - Logic or approach is right, but minor slip or clarity issue exists.  
+    - Show how a small fix leads to full mastery.  
+    - Tone should be positive and motivating.
+    - Avoid generic phrases, be specific and mention the concept in a deeper sense or topic.
+Each point should be in {language} and <= 15 words"""
+
+
         
         try:
-            # Build context from QA records
-            qa_summary = "\n".join([
-                f"Q: {qa.get('question', 'N/A')[:100]}\n"
-                f"A: {qa.get('answer', 'N/A')[:100]}\n"
-                f"Score: {qa.get('score', 0)}, XP: {qa.get('xp', 0)}\n"
-                for qa in qa_records[:10]  # Limit to first 10 QAs
-            ])
+            # Build context from QA records - include full text and all fields
+            qa_summary_parts = []
+            for qa in qa_records[:10]:  # Limit to first 10 QAs
+                qa_text = f"Q: {qa.get('question', 'N/A')}\n"
+                qa_text += f"Expected Answer: {qa.get('expected_answer', 'N/A')}\n"
+                qa_text += f"Student Answer: {qa.get('answer', 'N/A')}\n"
+                qa_text += f"Evaluation: {qa.get('explanation', '')}\n"
+                qa_text += f"Score: {qa.get('score', 0)}, XP: {qa.get('xp', 0)}\n"
+                qa_summary_parts.append(qa_text)
+            
+            qa_summary = "\n".join(qa_summary_parts)
             
             prompt = f"""{system_prompt}
 

@@ -12,7 +12,8 @@ class TutoringSessionStartView(APIView):
 
     def post(self, request):
         document_id = request.data.get('document_id')
-        language = request.data.get('language', 'tanglish')
+        # Use user's preferred language, fallback to request data, then 'tanglish'
+        language = getattr(request.user, 'preferred_language', None) or request.data.get('language', 'tanglish')
         try:
             user = request.user
             user_id = str(user.id)

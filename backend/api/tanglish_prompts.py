@@ -4,13 +4,15 @@ Exact prompts from specification for Intent Classifier, Question Generator, and 
 """
 
 # § 2 — Intent Classifier System Prompt (use Gemini 2.0 Flash)
-INTENT_CLASSIFIER_SYSTEM_PROMPT = """You are a short intent classifier. Input: USER_MESSAGE. Return ONLY one token: DIRECT_ANSWER, MIXED, or RETURN_QUESTION.
+def get_intent_classifier_system_prompt(language: str = "tanglish") -> str:
+    """Get intent classifier system prompt with dynamic language."""
+    return f"""You are a short intent classifier. Input: USER_MESSAGE. Return ONLY one token: DIRECT_ANSWER, MIXED, or RETURN_QUESTION.
 
 Rules:
 - If USER_MESSAGE contains question words (what, why, how, when, where, who, which) or ends with '?', classify as RETURN_QUESTION or MIXED
 - If USER_MESSAGE is answering the tutoring question directly (like "correct", "yes", "no", a number, or explanation), classify as DIRECT_ANSWER
 - If USER_MESSAGE contains BOTH an answer AND a question, classify as MIXED
-- Handle Tanglish or English. Do not explain. Return ONLY the token."""
+- Handle {language} or English. Do not explain. Return ONLY the token."""
 
 # Intent Classifier Fallback Rules (deterministic)
 def fallback_intent_classifier(user_message: str) -> str:
@@ -73,11 +75,23 @@ def fallback_intent_classifier(user_message: str) -> str:
 
 
 # § 3 — Question Generator System Prompt
-QUESTION_GENERATOR_SYSTEM_PROMPT = """You are a university-level question generator for Tamil-speaking learners. Use ONLY the provided CONTEXT.
-Output SHOULD be either English or Tanglish (Tamil words transliterated into Latin letters). DO NOT use Tamil script (தமிழ்) or pure Tamil words in native script. If you include Tamil words, always transliterate them into Latin letters (Tanglish). Keep language simple and human-like."""
+def get_question_generator_system_prompt(language: str = "tanglish") -> str:
+    """Get question generator system prompt with dynamic language."""
+    language_instruction = "Output SHOULD be in {language}."
+    if language.lower() == "tanglish":
+        language_instruction = "Output SHOULD be either English or Tanglish (Tamil words transliterated into Latin letters). DO NOT use Tamil script (தமிழ்) or pure Tamil words in native script. If you include Tamil words, always transliterate them into Latin letters (Tanglish)."
+    
+    return f"""You are a university-level question generator for learners. Use ONLY the provided CONTEXT.
+{language_instruction} Keep language simple and human-like."""
 
 # Question Generator Detailed Instructions
-QUESTION_GENERATOR_INSTRUCTIONS = """
+def get_question_generator_instructions(language: str = "tanglish") -> str:
+    """Get question generator instructions with dynamic language."""
+    language_phrasing = f"Use {language} phrasing"
+    if language.lower() == "tanglish":
+        language_phrasing = "Use Tanglish phrasing (Tamil words MUST be transliterated into Latin letters) or English. DO NOT output Tamil in native Tamil script"
+    
+    return f"""
 RULES for generation (must be implemented):
 1. Generate 10 rule-based questions per session per context.
 2. Use only the provided CONTEXT for question content. Do not invent out-of-context facts.
@@ -86,7 +100,7 @@ RULES for generation (must be implemented):
 5. For each question record: question_id, archetype, question_text, difficulty, expected_answer
 6. Difficulty must be one of: easy, medium, hard.
 7. question_id is auto generated (use format: q_<random_string>).
-8. Use Tanglish phrasing (Tamil words MUST be transliterated into Latin letters) or English. DO NOT output Tamil in native Tamil script. Keep sentences short (<20 words).
+8. {language_phrasing}. Keep sentences short (<20 words).
 9. Save which archetype was used for the question.
 
 ARCHETYPES (use these exactly):
@@ -110,28 +124,31 @@ ARCHETYPE GUIDANCE (how to craft each):
 REQUIRED OUTPUT FORMAT:
 Return a JSON array like:
 [
-  {
+  {{
     "question_id": "q_abc123",
     "archetype": "Concept Unfold",
     "question_text": "RLC circuit la resonance nadakkum bodhu current-um voltage-um epadi phase la irukkum? Simple-a sollu.",
     "difficulty": "easy",
     "expected_answer": "Resonance la current and voltage in phase."
-  },
+  }},
   ...
 ]
 
-GAMIFICATION WRAPPERS (Tanglish) to optionally prepend:
+GAMIFICATION WRAPPERS ({language}) to optionally prepend:
 - "Quick Round: Konjam fast-a sollu."
 - "Challenge: Ithu konjam kashtam."
 - "Explain: Idhai unga mazhiya sollu."
 - "Think: Ithu edhaana problem?"
 """
 
-def build_question_generation_prompt(context: str, total_questions: int = 10) -> str:
-    """Build the complete question generation prompt with context"""
-    return f"""{QUESTION_GENERATOR_SYSTEM_PROMPT}
+def build_question_generation_prompt(context: str, total_questions: int = 10, language: str = "tanglish") -> str:
+    """Build the complete question generation prompt with context and language"""
+    system_prompt = get_question_generator_system_prompt(language)
+    instructions = get_question_generator_instructions(language)
+    
+    return f"""{system_prompt}
 
-{QUESTION_GENERATOR_INSTRUCTIONS}
+{instructions}
 
 EDUCATIONAL CONTEXT:
 {context}
@@ -140,11 +157,15 @@ Generate exactly {total_questions} unique questions as a JSON array:"""
 
 
 # § 4 — Answer Evaluator (Gemini Judge) System Prompt
-ANSWER_EVALUATOR_SYSTEM_PROMPT = """You are an answer evaluator for Tanglish university learners. Use CONTEXT to judge correctness.
-Return JSON with keys: correct, score, explanation (Tanglish), confidence, followup_action, return_question_answer."""
+def get_answer_evaluator_system_prompt(language: str = "tanglish") -> str:
+    """Get answer evaluator system prompt with dynamic language."""
+    return f"""You are an answer evaluator for university learners. Use CONTEXT to judge correctness.
+Return JSON with keys: correct, score, explanation ({language}), confidence, followup_action, return_question_answer."""
 
 # Answer Evaluator Detailed Instructions
-ANSWER_EVALUATOR_INSTRUCTIONS = """
+def get_answer_evaluator_instructions(language: str = "tanglish") -> str:
+    """Get answer evaluator instructions with dynamic language."""
+    return f"""
 EVALUATOR RULES:
 1. Compare student_answer against expected_answer.
 2. Score in [0.0, 1.0]. Use partial credit when partial correctness exists. Score must reflect key-concept coverage.
@@ -155,13 +176,13 @@ EVALUATOR RULES:
    - score >= 0.25: 20-39 XP
    - score < 0.25: 1-19 XP
 4. correct is true if score >= 0.75 unless rubric says otherwise.
-5. explanation must be Tanglish and short (<30 words).
+5. explanation (<30 words, in {language}): Summarize the student’s understanding of the question. If correct, state it clearly; if not, highlight the misunderstanding or missing concept based on their answer.
 6. confidence float in [0.0, 1.0].
 7. followup_action one of: none, give_hint, ask_clarification, show_solution.
-8. return_question_answer is a concise Tanglish hint or short correction the agent may send to the student.
+8. return_question_answer is a concise {language} hint or short correction the agent may send to the student.
 
 EXAMPLE OUTPUT:
-{
+{{
   "XP": 45,
   "correct": false,
   "score": 0.35,
@@ -169,14 +190,17 @@ EXAMPLE OUTPUT:
   "followup_action": "give_hint",
   "return_question_answer": "Temperature change pannumbodhu resistance maariyum. Context la pathivu pannirukku.",
   "confidence": 0.7
-}
+}}
 """
 
-def build_evaluation_prompt(context: str, expected_answer: str, student_answer: str) -> str:
-    """Build the complete answer evaluation prompt"""
-    return f"""{ANSWER_EVALUATOR_SYSTEM_PROMPT}
+def build_evaluation_prompt(context: str, expected_answer: str, student_answer: str, language: str = "tanglish") -> str:
+    """Build the complete answer evaluation prompt with language"""
+    system_prompt = get_answer_evaluator_system_prompt(language)
+    instructions = get_answer_evaluator_instructions(language)
+    
+    return f"""{system_prompt}
 
-{ANSWER_EVALUATOR_INSTRUCTIONS}
+{instructions}
 
 CONTEXT:
 {context}
@@ -190,53 +214,24 @@ STUDENT ANSWER:
 Evaluate now and return JSON:"""
 
 
-# § 5 — Insights Generator System Prompt
-INSIGHTS_GENERATOR_SYSTEM_PROMPT = """You are an educational insights generator. Analyze the tutoring session QA pairs and evaluations to generate a comprehensive SWOT analysis in Tanglish."""
-
-INSIGHTS_GENERATOR_INSTRUCTIONS = """
-INSTRUCTIONS:
-1. Analyze all QA pairs and evaluation results provided.
-2. Generate insights in four categories: Strength, Weakness, Opportunity, Threat.
-3. Use Tanglish style: warm, human, slightly academic. Short sentences (<20 words).
-4. Be specific and actionable.
-5. Return JSON with keys: strength, weakness, opportunity, threat.
-
-OUTPUT FORMAT:
-{
-  "strength": "Strong understanding of basic concepts. Clear explanations.",
-  "weakness": "Struggled with application problems. Need more practice.",
-  "opportunity": "Can explore advanced topics. Try real-world scenarios.",
-  "threat": "Gaps in foundational knowledge may affect future learning."
-}
-"""
-
-def build_insights_prompt(qa_records: list, evaluations: list) -> str:
-    """Build insights generation prompt from session data"""
-    qa_summary = "\n".join([
-        f"Q{i+1}: {qa['question']}\nA: {qa['answer']}\nScore: {qa['score']}, XP: {qa['xp']}"
-        for i, qa in enumerate(qa_records)
-    ])
-    
-    return f"""{INSIGHTS_GENERATOR_SYSTEM_PROMPT}
-
-{INSIGHTS_GENERATOR_INSTRUCTIONS}
-
-SESSION DATA:
-{qa_summary}
-
-Generate insights JSON now:"""
 
 
 # Tanglish Style Guidelines (for reference)
-TANGLISH_STYLE_RULES = """
+def get_tanglish_style_rules(language: str = "tanglish") -> str:
+    """Get style rules with dynamic language."""
+    language_instructions = f"Use {language} for learner-facing content."
+    if language.lower() == "tanglish":
+        language_instructions = """Use Tanglish for learner-facing content (Tamil words must be transliterated into Latin letters). DO NOT use Tamil script (தமிழ்) anywhere in learner-facing outputs.
+- Natural Tamil words in Latin script allowed: enna, sari, purinjudha, kashtam."""
+    
+    return f"""
 0 — Global rules & style
 - Tone: warm, human, slightly academic.
-- Use Tanglish for learner-facing content (Tamil words must be transliterated into Latin letters). Do NOT use Tamil script (தமிழ்) anywhere in learner-facing outputs.
-- Natural Tamil words in Latin script allowed: enna, sari, purinjudha, kashtam.
-- Technical words remain in English. Add short Tanglish clarifications when helpful.
+- {language_instructions}
+- Technical words remain in English. Add short clarifications when helpful.
 - Avoid diacritics and complex grammar.
 - Keep responses concise and context-grounded.
-- Enable language toggle between Tanglish and English when requested.
+- Enable language toggle between different languages when requested.
 """
 
 
