@@ -28,6 +28,8 @@ const Home: React.FC = () => {
   const notificationTimerRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [showUploadPromptModal, setShowUploadPromptModal] = useState(false);
+  const [duplicateDocument, setDuplicateDocument] = useState<any | null>(null);
+  const [preselectDocumentId, setPreselectDocumentId] = useState<string | null>(null);
 
   useEffect(() => {
     // If another page navigated here with intent to open the upload prompt, handle it.
@@ -171,6 +173,19 @@ const Home: React.FC = () => {
       }
 
     } catch (error: any) {
+      // If backend returned 409 Conflict, the document already exists for this user.
+      if (error?.response?.status === 409) {
+        const existingDoc = error.response?.data?.document;
+        // Reset file input
+        event.target.value = '';
+        // Show a modal offering two choices: upload a different document or use the existing one from library
+        setDuplicateDocument(existingDoc || { id: null, filename: 'this document' });
+        // store preselect id so we can pass it into DocumentSelector when user chooses library
+        setPreselectDocumentId(existingDoc?.id ?? null);
+        setUploading(false);
+        return;
+      }
+
       alert('Upload failed: ' + (error?.response?.data?.error || error?.message || 'Unknown error'));
       setUploading(false);
     }
@@ -215,6 +230,8 @@ const Home: React.FC = () => {
   const handleDocumentSelect = async (documentIds: string[]) => {
     // Close selector and show the same uploading/processing overlay used for uploads
     setShowDocumentSelector(false);
+    // clear any preselect id now that user made a choice
+    setPreselectDocumentId(null);
     setUploading(true);
     try {
       // If documentIds is empty, start a general session. If multiple ids provided, pass them.
@@ -237,6 +254,8 @@ const Home: React.FC = () => {
 
   const handleCancelDocumentSelection = () => {
     setShowDocumentSelector(false);
+    // clear any pending preselect so it doesn't persist
+    setPreselectDocumentId(null);
   };
 
   const handleProfileClick = () => {
@@ -310,6 +329,15 @@ const Home: React.FC = () => {
         </div>
 
         <main className="flex-1 flex flex-col items-center justify-center space-y-6 md:ml-72">
+
+            {/* Small notification toast for duplicate-upload / info messages */}
+            {notificationMessage && (
+              <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50">
+                <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 px-4 py-2 rounded shadow">
+                  {notificationMessage}
+                </div>
+              </div>
+            )}
 
           <div className="w-full flex-1 flex flex-col items-center justify-center -mt-20 md:-mt-8">
             <h2 className="text-xl text-center mb-4">Learn more <br /> about yourself</h2>
@@ -406,6 +434,7 @@ const Home: React.FC = () => {
               // show the modal's "starting" UI when either a session start is in progress
               // or the global "uploading" overlay is active so the UX matches the home page
               startingSession={startingSession || uploading}
+              preselectDocumentId={preselectDocumentId ?? undefined}
             />
           </div>
         )}
@@ -424,6 +453,40 @@ const Home: React.FC = () => {
           onOpenLibrary={() => { setShowUploadPromptModal(false); setShowDocumentSelector(true); }}
           uploading={uploading}
         />
+
+        {/* Duplicate detected modal */}
+        {duplicateDocument && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="w-full max-w-md bg-white rounded-lg p-6 shadow">
+              <h3 className="text-lg font-semibold">Document Already Uploaded</h3>
+              <p className="text-sm text-gray-600 mt-2">We found a previously uploaded copy of <strong>{duplicateDocument?.filename}</strong> in your library.</p>
+              <div className="mt-4 flex gap-3">
+                <button
+                  className="flex-1 bg-gray-100 text-gray-800 py-2 rounded-lg"
+                  onClick={() => {
+                    // Let user upload a different document
+                    setDuplicateDocument(null);
+                    // open file picker
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  Upload different document
+                </button>
+                <button
+                  className="flex-1 bg-blue-600 text-white py-2 rounded-lg"
+                  onClick={() => {
+                    // Open library with this document preselected
+                    setPreselectDocumentId(duplicateDocument?.id ?? null);
+                    setShowDocumentSelector(true);
+                    setDuplicateDocument(null);
+                  }}
+                >
+                  Use document in library
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Fixed bottom chat input bar (mobile) — adapts on md+ to sit after the sidebar and look like a floating input */}
         <div className="fixed bottom-20 left-0 w-full bg-white px-4 pb-2 z-20 md:left-72 md:right-6 md:bottom-6 md:top-auto md:w-auto md:bg-transparent md:border-0 md:p-0">

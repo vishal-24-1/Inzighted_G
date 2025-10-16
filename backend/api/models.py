@@ -51,7 +51,14 @@ class Document(models.Model):
         ('processing', 'Processing'),
         ('completed', 'Completed'),
         ('failed', 'Failed'),
+        ('deleted', 'Deleted'),  # Soft-deleted status
+        ('delete_failed', 'Delete Failed'),  # Pinecone deletion failed
     ], default='uploading')
+    
+    # Soft delete fields
+    is_deleted = models.BooleanField(default=False, help_text="Soft delete flag - document hidden from UI")
+    deleted_at = models.DateTimeField(null=True, blank=True, help_text="Timestamp when document was deleted")
+    deleted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='deleted_documents', help_text="User who deleted this document")
     
     def __str__(self):
         return f"{self.filename} - {self.user.name}"

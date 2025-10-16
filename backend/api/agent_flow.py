@@ -538,7 +538,7 @@ class TutorAgent:
     def _answer_user_question_with_rag(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None) -> str:
         """
         Answer user's question using RAG (Retrieval Augmented Generation).
-        Uses the document context to answer the user's question in Tanglish style.
+        Uses the document context and attempts to answer in the user's preferred language.
         Now includes session Q&A context for better responses.
         """
         try:
@@ -563,20 +563,40 @@ class TutorAgent:
                 logger.info("[RAG] Error or no content found, returning message")
                 return f"{rag_response}\n\nLet me know if you have other questions, or let's continue with the next question."
             
-            # If RAG response is too long, summarize it in Tanglish style
+            # If RAG response is too long, summarize it in the user's preferred language
             if len(rag_response) > 200:
-                logger.info(f"[RAG] Response too long ({len(rag_response)} chars), summarizing in Tanglish...")
-                # Ask Gemini to make it concise and Tanglish - CRITICAL: Must provide the answer, not ask back
+                lang = (self.language or 'tanglish').lower()
+                logger.info(f"[RAG] Response too long ({len(rag_response)} chars), summarizing in {lang}...")
+                # Build a language-aware summary prompt. For Tanglish, preserve existing behavior.
+                if lang == 'tanglish':
+                    summary_instr = (
+                        "Convert this answer into concise Tanglish style (mix of Tamil and English). "
+                        "Keep the key information but make it conversational and brief (under 150 words). "
+                        "IMPORTANT: You must PROVIDE the answer, not ask the user a question."
+                    )
+                    summary_suffix = "Tanglish version (provide the answer):"
+                elif lang == 'english':
+                    summary_instr = (
+                        "Convert this answer into concise English. "
+                        "Keep the key information but make it conversational and brief (under 150 words). "
+                        "IMPORTANT: You must PROVIDE the answer, not ask the user a question."
+                    )
+                    summary_suffix = "English version (provide the answer):"
+                else:
+                    # Generic instruction when an unknown language is requested
+                    summary_instr = (
+                        f"Convert this answer into concise {lang} style. "
+                        "Keep the key information but make it conversational and brief (under 150 words). "
+                        "IMPORTANT: You must PROVIDE the answer, not ask the user a question."
+                    )
+                    summary_suffix = f"{lang} version (provide the answer):"
+
                 summary_prompt = (
-                    f"Convert this answer into concise Tanglish style (mix of Tamil and English). "
-                    f"Keep the key information but make it conversational and brief (under 150 words). "
-                    f"IMPORTANT: You must PROVIDE the answer, not ask the user a question.\n\n"
-                    f"Original answer:\n{rag_response}\n\n"
-                    f"Tanglish version (provide the answer):"
+                    f"{summary_instr}\n\nOriginal answer:\n{rag_response}\n\n{summary_suffix}"
                 )
                 tmp_resp = gemini_client.generate_response(summary_prompt, max_tokens=200)
                 rag_response = strip_gamification_prefix(tmp_resp)
-                logger.info(f"[RAG] Tanglish summary: {rag_response[:100]}...")
+                logger.info(f"[RAG] Summary ({lang}): {rag_response[:100]}...")
             
             # If the RAG response contains prompting language (asking user to try/answer),
             # rewrite it into a direct factual Tanglish answer.
@@ -587,12 +607,23 @@ class TutorAgent:
             lower_resp = (rag_response or '').lower()
             if any(p in lower_resp for p in prompting_phrases) or rag_response.strip().endswith('?'):
                 logger.info('[RAG] Detected prompting language in RAG output — forcing rewrite into direct answer')
+                # Build a language-aware rewrite prompt to avoid forcing Tanglish
+                lang = (self.language or 'tanglish').lower()
+                if lang == 'tanglish':
+                    rewrite_instr = "Rewrite the following text into a clear, direct answer in Tanglish (Tamil in latin words) and use English for technical terms."
+                    rewrite_suffix = "Tanglish direct answer:"
+                elif lang == 'english':
+                    rewrite_instr = "Rewrite the following text into a clear, direct answer in English and use English for technical terms."
+                    rewrite_suffix = "English direct answer:"
+                else:
+                    rewrite_instr = f"Rewrite the following text into a clear, direct answer in {lang} and use English for technical terms."
+                    rewrite_suffix = f"{lang} direct answer:"
+
                 rewrite_prompt = (
-                    f"Rewrite the following text into a clear, direct answer in Tanglish (Tamil in latin words) and use English for technical terms. "
-                    f"Do NOT ask the user any follow-up questions or tell them to try anything. "
+                    f"{rewrite_instr} Do NOT ask the user any follow-up questions or tell them to try anything. "
                     f"Keep key facts and, if available, include short citations in square brackets like [doc:chunk].\n\n"
                     f"Original text:\n{rag_response}\n\n"
-                    f"Tanglish direct answer:"
+                    f"{rewrite_suffix}"
                 )
                 try:
                     rewritten = gemini_client.generate_response(rewrite_prompt, max_tokens=200)

@@ -92,6 +92,9 @@ export const documentsAPI = {
     });
   },
   
+  // Delete a document by ID
+  delete: (documentId: string) => api.delete(`/documents/${documentId}/`),
+  
   query: (query: string) => api.post('/query/', { query }),
 };
 

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { documentsAPI } from '../utils/api';
-import { X } from 'lucide-react';
+import { X, Trash2 } from 'lucide-react';
 
 interface Document {
   id: string;
@@ -15,12 +15,15 @@ interface DocumentSelectorProps {
   onCancel: () => void;
   onUpload?: () => void;
   startingSession?: boolean;
+  preselectDocumentId?: string;
 }
 
-const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, onCancel, onUpload, startingSession = false }) => {
+const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, onCancel, onUpload, startingSession = false, preselectDocumentId }) => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   useEffect(() => {
     loadDocuments();
@@ -102,6 +105,17 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
   const processingDocuments = documents.filter(doc => doc.status === 'processing');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
+  // If the caller provided a preselectDocumentId, initialize selection with it
+  // after documents are loaded and the id exists in the list.
+  useEffect(() => {
+    if (!preselectDocumentId) return;
+    if (documents.length === 0) return;
+    const exists = documents.some(d => d.id === preselectDocumentId);
+    if (exists) {
+      setSelectedIds(new Set([preselectDocumentId]));
+    }
+  }, [preselectDocumentId, documents]);
+
   const toggleSelection = (id: string) => {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -109,6 +123,43 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
       else next.add(id);
       return next;
     });
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent, documentId: string) => {
+    e.stopPropagation(); // Prevent document selection
+    setDeleteConfirmId(documentId);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirmId) return;
+    
+    setDeletingId(deleteConfirmId);
+    setError(null);
+    
+    try {
+      await documentsAPI.delete(deleteConfirmId);
+      
+      // Remove from documents list
+      setDocuments(prev => prev.filter(doc => doc.id !== deleteConfirmId));
+      
+      // Remove from selection if selected
+      setSelectedIds(prev => {
+        const next = new Set(prev);
+        next.delete(deleteConfirmId);
+        return next;
+      });
+      
+      setDeleteConfirmId(null);
+    } catch (error: any) {
+      console.error('Error deleting document:', error);
+      setError(error.response?.data?.message || 'Failed to delete document. Please try again.');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirmId(null);
   };
 
   if (loading) {
@@ -180,31 +231,48 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
                     <h3 className="text-sm font-medium mb-2">Ready for Tutoring</h3>
                     <div className="flex flex-col gap-2">
                       {completedDocuments.map((doc) => (
-                        <button
+                        <div
                           key={doc.id}
-                          onClick={() => toggleSelection(doc.id)}
-                          className={`flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 text-left w-full ${selectedIds.has(doc.id) ? 'bg-blue-50' : ''}`}
+                          className={`relative flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 ${selectedIds.has(doc.id) ? 'bg-blue-50' : ''}`}
                         >
-                          <div className="text-2xl">📄</div>
-                          <div className="flex-1">
-                            <div className="font-medium">{doc.filename}</div>
-                            <div className="text-xs text-gray-500">
-                              {formatFileSize(doc.file_size)} • {formatDate(doc.upload_date)}
+                          <button
+                            onClick={() => toggleSelection(doc.id)}
+                            className="flex items-center gap-3 flex-1 text-left"
+                          >
+                            <div className="text-2xl">📄</div>
+                            <div className="flex-1">
+                              <div className="font-medium">{doc.filename}</div>
+                              <div className="text-xs text-gray-500">
+                                {formatFileSize(doc.file_size)} • {formatDate(doc.upload_date)}
+                              </div>
                             </div>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <div className="text-sm font-medium" style={{ color: getStatusColor(doc.status) }}>
-                              Ready
+                            <div className="flex items-center gap-2">
+                              <div className="text-sm font-medium" style={{ color: getStatusColor(doc.status) }}>
+                                Ready
+                              </div>
+                              <input
+                                type="checkbox"
+                                checked={selectedIds.has(doc.id)}
+                                onChange={() => toggleSelection(doc.id)}
+                                className="w-4 h-4"
+                                aria-label={`Select ${doc.filename}`}
+                              />
                             </div>
-                            <input
-                              type="checkbox"
-                              checked={selectedIds.has(doc.id)}
-                              onChange={() => toggleSelection(doc.id)}
-                              className="w-4 h-4"
-                              aria-label={`Select ${doc.filename}`}
-                            />
-                          </div>
-                        </button>
+                          </button>
+                          <button
+                            onClick={(e) => handleDeleteClick(e, doc.id)}
+                            disabled={deletingId === doc.id}
+                            className="p-2 hover:bg-red-50 rounded-lg transition-colors disabled:opacity-50"
+                            aria-label={`Delete ${doc.filename}`}
+                            title="Delete document"
+                          >
+                            {deletingId === doc.id ? (
+                              <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-red-500 rounded-full" />
+                            ) : (
+                              <Trash2 size={16} className="text-gray-400 hover:text-red-500" />
+                            )}
+                          </button>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -260,6 +328,43 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
             </button>
           </div>
         </div>
+        
+        {/* Delete Confirmation Modal */}
+        {deleteConfirmId && (
+          <div className="absolute inset-0 bg-black/70 flex items-center justify-center rounded-lg z-50">
+            <div className="bg-white rounded-lg p-6 max-w-sm mx-4 shadow-xl">
+              <h3 className="text-lg font-bold mb-2">Delete Document?</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                This will permanently delete the document and its data. Existing sessions and insights will be preserved.
+              </p>
+              <div className="text-sm text-gray-500 mb-6">
+                <strong>Document:</strong> {documents.find(d => d.id === deleteConfirmId)?.filename}
+              </div>
+              <div className="flex gap-3 justify-end">
+                <button
+                  onClick={handleDeleteCancel}
+                  className="px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteConfirm}
+                  disabled={deletingId === deleteConfirmId}
+                  className="px-4 py-2 text-sm font-medium text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {deletingId === deleteConfirmId ? (
+                    <span className="flex items-center gap-2">
+                      <div className="animate-spin h-4 w-4 border-2 border-white/60 border-t-white rounded-full" />
+                      Deleting...
+                    </span>
+                  ) : (
+                    'Delete'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

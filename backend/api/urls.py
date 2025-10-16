@@ -2,7 +2,7 @@ from django.urls import path
 from rest_framework_simplejwt.views import TokenRefreshView
 from .views import (
     RegisterView, LoginView, ProfileView, GoogleAuthView,
-    IngestView, QueryView, DocumentListView, DocumentStatusView, ChatBotView,
+    IngestView, QueryView, DocumentListView, DocumentStatusView, DocumentDeleteView, ChatBotView,
     ChatSessionListView, ChatSessionDetailView,
     TutoringSessionStartView, TutoringSessionAnswerView, 
     TutoringSessionEndView, TutoringSessionDetailView,
@@ -24,6 +24,7 @@ urlpatterns = [
     # RAG URLs
     path('documents/', DocumentListView.as_view(), name='documents'),
     path('documents/<uuid:document_id>/status/', DocumentStatusView.as_view(), name='document_status'),
+    path('documents/<uuid:document_id>/', DocumentDeleteView.as_view(), name='document_delete'),
     path('ingest/', IngestView.as_view(), name='ingest'),
     path('query/', QueryView.as_view(), name='query'),
     
