@@ -30,6 +30,41 @@ class User(AbstractUser):
         help_text='User preferred language for tutoring responses',
     )
     
+    # Gamification System 1: Streak (daily test completion tracking)
+    streak_current = models.IntegerField(
+        default=0,
+        help_text="Current consecutive daily test streak count"
+    )
+    streak_last_test_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date of last counted test for streak calculation (UTC)"
+    )
+    streak_earned_batches = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of earned streak milestone badges (e.g., ['Bronze (7)', 'Silver (15)']). Persists after streak resets."
+    )
+    
+    # Gamification System 2: Batch (XP-based progression with stars)
+    batch_current = models.CharField(
+        max_length=32,
+        default='Bronze',
+        help_text="Current batch level: Bronze, Silver, Gold, or Platinum"
+    )
+    current_star = models.IntegerField(
+        default=0,
+        help_text="Number of stars earned in current batch (0 to stars_per_batch)"
+    )
+    total_xp_sum = models.IntegerField(
+        default=0,
+        help_text="Sum of per-session average XP values (same as xp_points, kept for compatibility)"
+    )
+    stars_per_batch = models.IntegerField(
+        default=5,
+        help_text="Number of stars required to complete a batch and advance to next level"
+    )
+    
     USERNAME_FIELD = 'email'
     REQUIRED_FIELDS = ['username', 'name']
     
@@ -214,6 +249,9 @@ class TutoringQuestionBatch(models.Model):
         ('completed', 'Completed'),
         ('failed', 'Failed'),
     ], default='generating')
+    # Persisted session XP average and processing flag to make XP updates idempotent
+    session_xp_avg = models.IntegerField(default=0, help_text="Stored per-session average XP (int)")
+    xp_processed = models.BooleanField(default=False, help_text="Whether this batch/session has been processed for XP aggregation")
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -328,6 +366,12 @@ class EvaluatorResult(models.Model):
     ], default='none')
     return_question_answer = models.TextField(blank=True, help_text="Tanglish hint or correction to send to student")
     
+    # Progress tracking flag for idempotence
+    progress_processed = models.BooleanField(
+        default=False,
+        help_text="Whether this evaluation has been processed for streak/batch progress updates"
+    )
+    
     created_at = models.DateTimeField(auto_now_add=True)
     
     class Meta:
@@ -337,3 +381,45 @@ class EvaluatorResult(models.Model):
     
     def __str__(self):
         return f"Eval: {self.score:.2f} ({self.xp}XP) - {self.explanation[:50]}..."
+
+
+class SessionFeedback(models.Model):
+    """
+    Model to store post-session feedback from users
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    session = models.OneToOneField(ChatSession, on_delete=models.CASCADE, related_name='feedback')
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='session_feedbacks')
+    
+    # Feedback fields
+    rating = models.IntegerField(
+        null=True, 
+        blank=True, 
+        help_text="User rating 0-10 for recommendation likelihood"
+    )
+    liked = models.TextField(
+        blank=True, 
+        help_text="What the user liked about the session (optional)"
+    )
+    improve = models.TextField(
+        blank=True, 
+        help_text="What the user thinks should be improved (required unless skipped)"
+    )
+    skipped = models.BooleanField(
+        default=False, 
+        help_text="Whether the user skipped the feedback form"
+    )
+    
+    # Timestamps
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = "Session Feedback"
+        verbose_name_plural = "Session Feedbacks"
+    
+    def __str__(self):
+        if self.skipped:
+            return f"Feedback (Skipped) - {self.session.get_title()}"
+        return f"Feedback (Rating: {self.rating}) - {self.session.get_title()}"

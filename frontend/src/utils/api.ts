@@ -128,4 +128,22 @@ export const insightsAPI = {
     api.get(`/sessions/${sessionId}/insights/`),
 };
 
+export const feedbackAPI = {
+  submitFeedback: (sessionId: string, data: {
+    rating?: number;
+    liked?: string;
+    improve?: string;
+    skipped?: boolean;
+  }) => api.post(`/sessions/${sessionId}/feedback/`, data),
+  
+  getFeedback: (sessionId: string) =>
+    api.get(`/sessions/${sessionId}/feedback/`),
+};
+
+export const progressAPI = {
+  getProgress: () => api.get('/progress/'),
+  
+  refreshProgress: () => api.post('/progress/refresh/'),
+};
+
 export default api;

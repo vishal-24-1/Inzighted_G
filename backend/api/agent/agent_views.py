@@ -41,7 +41,9 @@ class AgentSessionStartView(APIView):
     
     def post(self, request):
         document_id = request.data.get('document_id')
-        language = request.data.get('language', 'tanglish')
+        # Use user's preferred language, fallback to request data
+        user_preferred = getattr(request.user, 'preferred_language', 'tanglish')
+        language = request.data.get('language', user_preferred)
         
         try:
             user = request.user
@@ -339,9 +341,13 @@ class AgentLanguageToggleView(APIView):
     def post(self, request, session_id):
         language = request.data.get('language', '').lower()
         
-        if language not in ['tanglish', 'english']:
+        # Get valid language choices from User model
+        from ..models import User
+        valid_languages = [choice[0] for choice in User.PREFERRED_LANGUAGE_CHOICES]
+        
+        if language not in valid_languages:
             return Response(
-                {"error": "Language must be 'tanglish' or 'english'"},
+                {"error": f"Language must be one of: {', '.join(valid_languages)}"},
                 status=status.HTTP_400_BAD_REQUEST
             )
         

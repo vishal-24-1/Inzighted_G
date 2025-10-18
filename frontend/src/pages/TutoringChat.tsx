@@ -3,6 +3,7 @@ import { useAuth } from '../utils/AuthContext';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { tutoringAPI } from '../utils/api';
 import { Mic, Send } from 'lucide-react';
+import SessionFeedback from '../components/SessionFeedback';
 
 interface Message {
   id: string;
@@ -32,6 +33,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   const [recognition, setRecognition] = useState<any | null>(null);
   const [sessionFinished, setSessionFinished] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
+  const [showFeedback, setShowFeedback] = useState(false);
 
   const [sessionDocument, setSessionDocument] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -233,20 +235,33 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
 
     try {
       await tutoringAPI.endSession(sessionId);
-      if (onEndSession) onEndSession();
-      else navigate('/boost');
+      
+      // Show feedback form instead of navigating immediately
+      setShowFeedback(true);
+      setIsEndingSession(false);
     } catch (error: any) {
       console.error('Failed to end session:', error);
-      // Still return to parent or navigate home even if end request fails
-      if (onEndSession) onEndSession();
-      else navigate('/boost');
-    } finally {
-      // if the component is still mounted, clear the loading state
-      try {
-        setIsEndingSession(false);
-      } catch (e) {
-        // component may have unmounted after navigate; ignore
-      }
+      // Still show feedback even if end request fails
+      setShowFeedback(true);
+      setIsEndingSession(false);
+    }
+  };
+
+  const handleFeedbackComplete = () => {
+    // Navigate to insights page after feedback is submitted
+    if (onEndSession) {
+      onEndSession();
+    } else {
+      navigate(`/boost?session=${sessionId}`);
+    }
+  };
+
+  const handleFeedbackSkip = () => {
+    // Navigate to insights page after skipping feedback
+    if (onEndSession) {
+      onEndSession();
+    } else {
+      navigate(`/boost?session=${sessionId}`);
     }
   };
 
@@ -283,9 +298,19 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   }
 
   return (
-    // Outer full-width background so mobile remains unchanged but desktop can center a wider container
-    <div className="min-h-screen bg-gray-50 font-sans w-full">
-      <div className="max-w-sm md:max-w-full mx-auto shadow-xl flex flex-col min-h-screen">
+    <>
+      {/* Show feedback modal when session is finished */}
+      {showFeedback && sessionId && (
+        <SessionFeedback
+          sessionId={sessionId}
+          onComplete={handleFeedbackComplete}
+          onSkip={handleFeedbackSkip}
+        />
+      )}
+
+      {/* Outer full-width background so mobile remains unchanged but desktop can center a wider container */}
+      <div className="min-h-screen bg-gray-50 font-sans w-full">
+        <div className="max-w-sm md:max-w-full mx-auto shadow-xl flex flex-col min-h-screen">
         <header className="bg-white border-b text-gray-900 p-4 sticky top-0 z-20">
           <div className="flex justify-between items-center">
             <h1 className="text-lg font-semibold m-0 truncate max-w-[8rem] md:max-w-xl">{sessionDocument || 'AI Tutor'}</h1>
@@ -411,6 +436,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
         </main>
       </div>
     </div>
+    </>
   );
 };
 

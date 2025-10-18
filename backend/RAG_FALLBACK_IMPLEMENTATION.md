@@ -71,8 +71,9 @@ if len(llm_response.strip()) < 30:
 # Check if RAG returned general knowledge fallback (contains the note)
 if "(Note: This answer is based on general knowledge" in rag_response:
     logger.info("[RAG] Received general knowledge fallback response")
-    # Return as-is with encouragement
-    return f"{rag_response}\n\nNow, let's continue with the question."
+    # Return the RAG response as-is. The tutoring agent will attach a separate
+    # proceed prompt message (not concatenated into the same reply).
+    return rag_response
 ```
 
 ## Flow Diagram

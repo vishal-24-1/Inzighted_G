@@ -10,6 +10,7 @@ from pypdf import PdfReader
 import tempfile
 import sentry_sdk
 import unicodedata
+import json
 
 # Try to import pdfplumber as a fallback for better PDF text extraction
 try:
@@ -411,6 +412,108 @@ def clean_text_for_upsert(s: str, max_len: int = 1000) -> str:
         safe = ''.join(ch for ch in safe if ord(ch) < 128)
 
     return safe[:max_len]
+
+
+#########################
+# Pinecone safe upsert
+#########################
+
+def _estimate_payload_size(vectors_payload: list) -> int:
+    """Estimate the JSON serialized payload size in bytes for a Pinecone upsert.
+
+    We serialize as {'vectors': vectors_payload} because that's the shape sent
+    by the client under the hood. This is a reasonable estimate for request size.
+    """
+    try:
+        return len(json.dumps({"vectors": vectors_payload}, ensure_ascii=False).encode('utf-8'))
+    except Exception:
+        # Fallback conservative estimate
+        try:
+            return len(json.dumps({"vectors": vectors_payload}).encode('utf-8'))
+        except Exception:
+            return 0
+
+
+def _trim_vector_metadata_text(vec: dict, max_text_len: int = 200) -> dict:
+    """Trim the `metadata.text` field on a vector to a smaller excerpt to reduce payload size.
+
+    Returns a new vector dict (does not mutate original).
+    """
+    v = dict(vec)
+    md = dict(v.get('metadata', {}))
+    text = md.get('text')
+    if text and isinstance(text, str):
+        md['text'] = text[:max_text_len]
+        md['text_exerpt_truncated'] = True
+        v['metadata'] = md
+    return v
+
+
+def safe_upsert(index, vectors: list, namespace: str, max_request_bytes: int | None = None, max_items: int = 200):
+    """Upsert vectors to Pinecone while ensuring each HTTP request stays below the
+    Pinecone per-request size limit.
+
+    - max_request_bytes defaults to settings.PINECONE_MAX_REQUEST_BYTES or 4_194_304.
+    - max_items caps how many items we consider in a single batch for performance.
+
+    This function will attempt to trim large vector metadata where needed. It returns True on success.
+    """
+    if max_request_bytes is None:
+        max_request_bytes = getattr(settings, 'PINECONE_MAX_REQUEST_BYTES', 4_194_304)
+
+    batch = []
+    try:
+        for vec in vectors:
+            batch.append(vec)
+
+            # If batch would exceed either item or byte limits, flush current batch first.
+            if len(batch) >= max_items or _estimate_payload_size(batch) >= max_request_bytes:
+                # If the single item made the batch too large and batch length == 1,
+                # try to trim that vector's metadata and retry.
+                if len(batch) == 1 and _estimate_payload_size(batch) >= max_request_bytes:
+                    # Attempt to trim metadata.text if present
+                    trimmed = _trim_vector_metadata_text(batch[0], max_text_len=200)
+                    if _estimate_payload_size([trimmed]) < max_request_bytes:
+                        index.upsert(vectors=[trimmed], namespace=namespace)
+                        batch = []
+                        continue
+                    else:
+                        # As a last resort, remove the `text` field entirely
+                        v2 = dict(batch[0])
+                        meta = dict(v2.get('metadata', {}))
+                        meta.pop('text', None)
+                        v2['metadata'] = meta
+                        if _estimate_payload_size([v2]) < max_request_bytes:
+                            index.upsert(vectors=[v2], namespace=namespace)
+                            batch = []
+                            continue
+                        else:
+                            raise ValueError('Single vector payload exceeds Pinecone request size after trimming')
+                # Normal flush path: send current batch (excluding last if it caused overflow)
+                # If estimate says overflow, try to pop last and flush smaller batch
+                if _estimate_payload_size(batch) >= max_request_bytes:
+                    last = batch.pop()
+                    if batch:
+                        index.upsert(vectors=batch, namespace=namespace)
+                    batch = [last]
+                else:
+                    index.upsert(vectors=batch, namespace=namespace)
+                    batch = []
+
+        # Flush remaining
+        if batch:
+            index.upsert(vectors=batch, namespace=namespace)
+
+        return True
+
+    except Exception as e:
+        # Bubble up but also log to sentry for visibility
+        print(f"safe_upsert error: {e}")
+        try:
+            sentry_sdk.capture_exception(e)
+        except Exception:
+            pass
+        raise
 
 def chunk_pages_to_chunks(pages: list[str], chunk_size: int = 1000, overlap: int = 100) -> list[tuple[str, int]]:
     """
@@ -1010,7 +1113,8 @@ def ingest_document_from_s3(s3_key: str, user_id: str):
     # 7. Upsert to Pinecone using namespace
     try:
         print(f"Upserting {len(vectors)} vectors to Pinecone namespace: {tenant_tag}...")
-        index.upsert(vectors=vectors, namespace=tenant_tag)
+        # Use safe_upsert which respects Pinecone per-request size limits
+        safe_upsert(index, vectors, namespace=tenant_tag)
         print("Upsert complete.")
         return True
     except Exception as e:
@@ -1141,7 +1245,7 @@ def ingest_document(file_path: str, user_id: str):
     # 6. Upsert to Pinecone using namespace
     try:
         print(f"Upserting {len(vectors)} vectors to Pinecone namespace: {tenant_tag}...")
-        index.upsert(vectors=vectors, namespace=tenant_tag)
+        safe_upsert(index, vectors, namespace=tenant_tag)
         print("Upsert complete.")
     except Exception as e:
         print(f"Error upserting to Pinecone: {e}")

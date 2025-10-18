@@ -516,16 +516,46 @@ class GeminiLLMClient:
                 cleaned = cleaned.strip()
                 
                 questions = json.loads(cleaned)
-                
+
                 if not isinstance(questions, list):
                     raise ValueError("Response is not a JSON array")
-                
+
+                # Normalize elements: handle cases where LLM returns arrays-of-arrays or stringified objects
+                normalized = []
+                for q in questions:
+                    # If element is a dict, keep
+                    if isinstance(q, dict):
+                        normalized.append(q)
+                        continue
+
+                    # If element is a list whose first item is a dict, use the first dict
+                    if isinstance(q, list) and q and isinstance(q[0], dict):
+                        normalized.append(q[0])
+                        continue
+
+                    # If element is a string, try to parse it as JSON
+                    if isinstance(q, str):
+                        try:
+                            parsed = json.loads(q)
+                            if isinstance(parsed, dict):
+                                normalized.append(parsed)
+                                continue
+                            # If parsed is a list with dicts, take first
+                            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                                normalized.append(parsed[0])
+                                continue
+                        except Exception:
+                            # ignore parse errors for this element
+                            pass
+
+                    # Otherwise, skip this element (unusable shape)
+                    logger.debug(f"Skipping question element with unexpected type: {type(q)}")
+
                 # Validate structure
                 required_keys = ['question_id', 'archetype', 'question_text', 'difficulty', 'expected_answer']
                 valid_questions = []
-                
-                for q in questions:
-                    if isinstance(q, dict) and all(k in q for k in required_keys):
+                for q in normalized:
+                    if all(k in q for k in required_keys):
                         valid_questions.append(q)
                 
                 if len(valid_questions) < total_questions // 2:

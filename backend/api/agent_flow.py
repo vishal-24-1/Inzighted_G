@@ -14,6 +14,9 @@ import uuid
 
 logger = logging.getLogger(__name__)
 
+# Visible proceed prompt shown as a separate bot message (no hidden sentinel)
+PROCEED_PROMPT = "Shall we proceed to the next question? Reply 'yes' to continue, or ask another question if you need more clarification."
+
 
 class TutorAgent:
     """
@@ -36,8 +39,9 @@ class TutorAgent:
         self.user = session.user
         self.user_id = str(self.user.id)
         self.tenant_tag = get_tenant_tag(self.user_id)
-        # Get language preference from user, fallback to session language, then 'tanglish'
-        self.language = getattr(self.user, 'preferred_language', None) or self.session.language or 'tanglish'
+        # Get language preference from user, fallback to session language, then user's default
+        default_lang = self.user.PREFERRED_LANGUAGE_CHOICES[0][0] if hasattr(self.user, 'PREFERRED_LANGUAGE_CHOICES') else 'tanglish'
+        self.language = getattr(self.user, 'preferred_language', None) or self.session.language or default_lang
     
     def get_or_create_question_batch(self) -> TutoringQuestionBatch:
         """
@@ -56,9 +60,23 @@ class TutorAgent:
         
         try:
             # Get document context for question generation
-            context = self._fetch_document_context()
-            
+            # Try twice when no chunks are found before giving up.
+            context = None
+            for attempt in range(2):
+                context = self._fetch_document_context()
+                if context is None:
+                    # None specifically indicates "no chunks found" from _fetch_document_context
+                    logger.info(f"No context chunks found for question generation (attempt {attempt+1}/2)")
+                    # If this was the first attempt, try once more
+                    if attempt == 0:
+                        continue
+                    else:
+                        break
+                else:
+                    break
+
             if not context:
+                # After two attempts, still no document context available
                 raise ValueError("No document context available")
             
             # Generate structured questions using Gemini with user's language preference
@@ -105,13 +123,14 @@ class TutorAgent:
                 "session_id": str(self.session.id)
             })
             
-            # Create fallback batch
+            # Create fallback batch. Use a clear, user-facing fallback asking them
+            # to re-upload or try again when no relevant document chunks were found.
             fallback_questions = [{
                 "question_id": "q_fallback",
                 "archetype": "Concept Unfold",
-                "question_text": "Can you explain the main topic from your document?",
+                "question_text": "We couldn't find relevant content in your uploaded document. Please re-upload the document or try again.",
                 "difficulty": "easy",
-                "expected_answer": "General explanation"
+                "expected_answer": "Please re-upload or try again"
             }]
             
             batch = TutoringQuestionBatch.objects.create(
@@ -178,7 +197,7 @@ class TutorAgent:
             
             if not context_parts:
                 logger.warning("No context chunks found for question generation")
-                return "General educational content. Generate questions about learning and understanding."
+                return None
             
             # Combine context (limit total size)
             combined_context = "\n\n".join(context_parts[:15])  # Limit to first 15 chunks
@@ -247,6 +266,22 @@ class TutorAgent:
             batch.status = 'completed'
             batch.save()
             logger.info("All questions in batch completed")
+            
+            # Process session completion for XP/Batch gamification
+            try:
+                from .progress import process_session_completion
+                session_result = process_session_completion(self.session)
+                logger.info(f"Session XP processed: {session_result}")
+            except Exception as session_error:
+                # Don't let session XP processing failures break the flow
+                logger.error(f"Error processing session completion XP: {session_error}", exc_info=True)
+                sentry_sdk.capture_exception(session_error, extras={
+                    "component": "agent_flow",
+                    "method": "advance_to_next_question",
+                    "stage": "session_completion_xp",
+                    "session_id": str(self.session.id)
+                })
+            
             return False
     
     def handle_user_message(self, user_message: str, current_question_item: QuestionItem) -> dict:
@@ -273,13 +308,13 @@ class TutorAgent:
             is_user_message=True
         )
         # --- If previous bot message asked to proceed, handle confirmation here ---
-        ASK_SENTINEL = '[ASK_TO_PROCEED]'
+        # Detect if the last bot message was the proceed prompt by checking for the exact prompt text
         try:
             last_bot = ChatMessage.objects.filter(session=self.session, is_user_message=False).order_by('-created_at').first()
         except Exception:
             last_bot = None
 
-        if last_bot and last_bot.content and ASK_SENTINEL in last_bot.content:
+        if last_bot and last_bot.content and PROCEED_PROMPT in last_bot.content:
             # Interpret user's reply as confirmation/clarification
             print(f"[AGENT] Detected ASK_TO_PROCEED sentinel in last bot message")
             reply = (user_message or '').strip().lower()
@@ -315,21 +350,17 @@ class TutorAgent:
                     "evaluation": None
                 }
             
-            # User asked another follow-up question - answer it and ask to proceed again
-            print(f"[AGENT] User asked follow-up question, will answer and ask to proceed again")
+            # User asked another follow-up question - answer it and append proceed prompt inline
+            print(f"[AGENT] User asked follow-up question, will answer and append proceed prompt inline")
             try:
                 clarification_reply = self._answer_user_question_with_rag(user_message, current_question_item)
             except Exception as e:
                 logger.error(f"[AGENT] Error answering follow-up question: {e}")
                 clarification_reply = "Sorry, I couldn't fetch an answer right now."
-            
-            # Always append proceed prompt for follow-up questions
-            proceed_prompt = "\n\nShall we proceed to the next question? Reply 'yes' to continue, or ask another question if you need more clarification."
-            sentinel = "\n[ASK_TO_PROCEED]"
-            full_reply = clarification_reply + proceed_prompt + sentinel
-            
+
+            # Return clarification with the proceed prompt appended directly to the reply
             return {
-                "reply": full_reply,
+                "reply": clarification_reply + "\n\n" + PROCEED_PROMPT,
                 "next_question": None,
                 "session_complete": False,
                 "evaluation": None
@@ -465,14 +496,12 @@ class TutorAgent:
                 pass
             clarification_reply = "Sorry, I couldn't fetch an answer right now."
         
-        # Instead of auto-advancing, ask the user if they want to proceed
-        proceed_prompt = "\n\nShall we proceed to the next question? Reply 'yes' to continue, or ask another question if you need more clarification."
-        sentinel = "\n[ASK_TO_PROCEED]"
-        full_reply = clarification_reply + proceed_prompt + sentinel
-        
-        print(f"[AGENT] ✅ Returning reply with proceed prompt (no auto-advance)\n")
+        # Instead of auto-advancing, return the clarification reply and a separate
+        # proceed_message that the view will persist as its own ChatMessage.
+        # Append proceed prompt immediately after the clarification reply
+        print(f"[AGENT] ✅ Returning reply with inline proceed prompt\n")
         return {
-            "reply": full_reply,
+            "reply": clarification_reply + "\n\n" + PROCEED_PROMPT,
             "next_question": None,
             "session_complete": False,
             "evaluation": None
@@ -510,6 +539,22 @@ class TutorAgent:
             )
             
             logger.info(f"Answer evaluated: score={evaluator_result.score}, XP={evaluator_result.xp}")
+            
+            # Update gamification progress (streak and batch systems)
+            try:
+                from .progress import update_on_test_completion
+                progress_result = update_on_test_completion(self.user, evaluator_result)
+                logger.info(f"Progress updated: {progress_result}")
+            except Exception as progress_error:
+                # Don't let progress update failures break the evaluation flow
+                logger.error(f"Error updating progress: {progress_error}", exc_info=True)
+                sentry_sdk.capture_exception(progress_error, extras={
+                    "component": "agent_flow",
+                    "method": "_evaluate_answer",
+                    "stage": "progress_update",
+                    "session_id": str(self.session.id)
+                })
+            
             return evaluator_result
             
         except Exception as e:
@@ -533,6 +578,16 @@ class TutorAgent:
                 followup_action='none',
                 return_question_answer=''
             )
+            
+            # Update gamification progress even for fallback evaluations
+            try:
+                from .progress import update_on_test_completion
+                progress_result = update_on_test_completion(self.user, evaluator_result)
+                logger.info(f"Progress updated (fallback): {progress_result}")
+            except Exception as progress_error:
+                logger.error(f"Error updating progress (fallback): {progress_error}", exc_info=True)
+                sentry_sdk.capture_exception(progress_error)
+            
             return evaluator_result
     
     def _answer_user_question_with_rag(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None) -> str:
@@ -555,17 +610,19 @@ class TutorAgent:
             # Check if RAG returned general knowledge fallback (contains the note)
             if "(Note: This answer is based on general knowledge" in rag_response:
                 logger.info("[RAG] Received general knowledge fallback response")
-                # Return as-is with encouragement
-                return f"{rag_response}\n\nNow, let's continue with the question."
+                # Return the RAG response as-is. Callers decide whether to add a proceed prompt.
+                return rag_response
             
             # Check if response contains error message
             if "I could not find" in rag_response or "Error:" in rag_response:
                 logger.info("[RAG] Error or no content found, returning message")
-                return f"{rag_response}\n\nLet me know if you have other questions, or let's continue with the next question."
+                # Return the raw RAG response; callers will decide on next steps.
+                return rag_response
             
             # If RAG response is too long, summarize it in the user's preferred language
             if len(rag_response) > 200:
-                lang = (self.language or 'tanglish').lower()
+                default_lang = self.user.PREFERRED_LANGUAGE_CHOICES[0][0] if hasattr(self.user, 'PREFERRED_LANGUAGE_CHOICES') else 'tanglish'
+                lang = (self.language or default_lang).lower()
                 logger.info(f"[RAG] Response too long ({len(rag_response)} chars), summarizing in {lang}...")
                 # Build a language-aware summary prompt. For Tanglish, preserve existing behavior.
                 if lang == 'tanglish':
@@ -608,7 +665,8 @@ class TutorAgent:
             if any(p in lower_resp for p in prompting_phrases) or rag_response.strip().endswith('?'):
                 logger.info('[RAG] Detected prompting language in RAG output — forcing rewrite into direct answer')
                 # Build a language-aware rewrite prompt to avoid forcing Tanglish
-                lang = (self.language or 'tanglish').lower()
+                default_lang = self.user.PREFERRED_LANGUAGE_CHOICES[0][0] if hasattr(self.user, 'PREFERRED_LANGUAGE_CHOICES') else 'tanglish'
+                lang = (self.language or default_lang).lower()
                 if lang == 'tanglish':
                     rewrite_instr = "Rewrite the following text into a clear, direct answer in Tanglish (Tamil in latin words) and use English for technical terms."
                     rewrite_suffix = "Tanglish direct answer:"
@@ -633,18 +691,18 @@ class TutorAgent:
                 except Exception as e:
                     logger.warning(f"[RAG] Failed to rewrite prompting output: {e}")
 
-            # Return the answer with encouragement to continue
+            # Return the answer. Callers will attach any proceed prompt as a separate message.
             logger.info(f"[RAG] Returning final response to user")
-            return f"{rag_response}\n\nNow, let's continue with the question."
+            return rag_response
                 
         except Exception as e:
             logger.error(f"Error answering user question with RAG: {e}")
             sentry_sdk.capture_exception(e)
-            # Fallback to generic response
+            # Fallback to generic response (no appended proceed text)
             if '?' in user_message:
                 return "Good question! Let me help: focus on the key concepts from your document. Try your best to answer based on what you've learned."
             else:
-                return "I see. Let's continue with the next question."
+                return "I see."
     
     def _build_session_context(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None, max_chars: int = 8000) -> str:
         """

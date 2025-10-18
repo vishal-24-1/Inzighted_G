@@ -7,6 +7,7 @@ import Sidebar from '../components/Sidebar';
 import { FileText, Send, Rocket, UserRound, Mic, X } from 'lucide-react';
 import MobileDock from '../components/MobileDock';
 import UploadPromptModal from '../components/UploadPromptModal';
+import StreakWidget from '../components/StreakWidget';
 import logo from '../logo.svg';
 
 // runtime feature detection is used below; avoid global type redeclarations
@@ -292,6 +293,9 @@ const Home: React.FC = () => {
             </button>
 
             <div className="flex items-center gap-2">
+              {/* Streak Widget - prominent position */}
+              <StreakWidget />
+              
               <button
                 type="button"
                 onClick={() => setShowDocumentSelector(true)}

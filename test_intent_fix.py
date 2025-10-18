@@ -12,8 +12,8 @@ User: "what is chunker?"
 Expected Flow:
 1. Intent Classifier: RETURN_QUESTION
 2. RAG retrieves answer from document about chunker
-3. Response: "Chunker worker enna pannum nu un friend-kku solra maari sollu. 
-             (Chunks = small pieces). Now, let's continue with the question."
+3. Response: "Chunker worker enna pannum nu un friend-kku solra maari sollu. (Chunks = small pieces)."
+    A separate proceed prompt message will be sent: "Shall we proceed to the next question? Reply 'yes' to continue, or ask another question if you need more clarification." 
 4. Same question re-asked
 5. No evaluation (since user asked, didn't answer)
 """

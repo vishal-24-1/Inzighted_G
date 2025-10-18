@@ -1,10 +1,15 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework import status
 import sentry_sdk
+import logging
 import time
-from ..models import ChatSession, SessionInsight
-from ..serializers import ChatSessionSerializer
+from ..models import ChatSession, SessionInsight, SessionFeedback
+from ..serializers import ChatSessionSerializer, SessionFeedbackSerializer
+
+# Module logger
+logger = logging.getLogger(__name__)
 
 
 class TutoringSessionStartView(APIView):
@@ -12,8 +17,9 @@ class TutoringSessionStartView(APIView):
 
     def post(self, request):
         document_id = request.data.get('document_id')
-        # Use user's preferred language, fallback to request data, then 'tanglish'
-        language = getattr(request.user, 'preferred_language', None) or request.data.get('language', 'tanglish')
+        # Use user's preferred language, fallback to request data
+        user_preferred = getattr(request.user, 'preferred_language', request.user.PREFERRED_LANGUAGE_CHOICES[0][0])
+        language = getattr(request.user, 'preferred_language', None) or request.data.get('language', user_preferred)
         try:
             user = request.user
             user_id = str(user.id)
@@ -88,6 +94,12 @@ class TutoringSessionAnswerView(APIView):
                 reply_msg = ChatMessage.objects.create(session=session, user=user, content=result['reply'], is_user_message=False, response_time_ms=response_time_ms)
                 response_data["feedback"] = {"id": str(reply_msg.id), "text": result['reply']}
 
+            # If agent returned a separate proceed prompt, store it as a separate bot message
+            if result.get('proceed_message'):
+                from ..models import ChatMessage
+                proceed_msg = ChatMessage.objects.create(session=session, user=user, content=result['proceed_message'], is_user_message=False)
+                response_data["proceed_message"] = {"id": str(proceed_msg.id), "text": result['proceed_message']}
+
             if result.get('next_question'):
                 from ..models import ChatMessage
                 next_q_msg = ChatMessage.objects.create(session=session, user=user, content=result['next_question'], is_user_message=False)
@@ -126,6 +138,25 @@ class TutoringSessionEndView(APIView):
             except Exception:
                 insights_generated = False
                 insight_status = 'failed'
+
+            # Ensure session-level XP and batch progress are processed.
+            # process_session_completion is idempotent and will recompute
+            # user.total_xp_sum by summing completed SessionInsight.xp_points.
+            try:
+                from ..progress import process_session_completion
+                try:
+                    proc_result = process_session_completion(session)
+                    logger.info(f"process_session_completion result for session {session.id}: {proc_result}")
+                except Exception as e:
+                    # Don't let this break the endpoint; log and capture in Sentry
+                    logger.error(f"Error running process_session_completion for session {session.id}: {e}")
+                    try:
+                        sentry_sdk.capture_exception(e)
+                    except Exception:
+                        pass
+            except Exception:
+                # If import fails for any reason, ignore to preserve backward compatibility
+                pass
 
             return Response({"message": "Tutoring session ended successfully", "session_id": str(session.id), "total_messages": session.messages.count(), "insights_generated": insights_generated, "insight_status": insight_status})
         except Exception as e:
@@ -228,8 +259,95 @@ class UserSessionsListView(APIView):
             return Response({"error": f"Failed to fetch sessions: {str(e)}"}, status=500)
 
 
+class SessionFeedbackView(APIView):
+    """
+    View to submit post-session feedback
+    """
+    permission_classes = [IsAuthenticated]
+    
+    def post(self, request, session_id):
+        try:
+            user = request.user
+            
+            # Verify session exists and belongs to user
+            try:
+                session = ChatSession.objects.get(id=session_id, user=user)
+            except ChatSession.DoesNotExist:
+                return Response(
+                    {"error": "Session not found"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if feedback already exists
+            if hasattr(session, 'feedback') and session.feedback:
+                return Response(
+                    {"error": "Feedback already submitted for this session"}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Create feedback
+            serializer = SessionFeedbackSerializer(data=request.data)
+            if serializer.is_valid():
+                serializer.save(session=session, user=user)
+                return Response(
+                    {
+                        "message": "Feedback submitted successfully",
+                        "feedback": serializer.data
+                    },
+                    status=status.HTTP_201_CREATED
+                )
+            else:
+                return Response(
+                    {"error": "Invalid feedback data", "details": serializer.errors},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+                
+        except Exception as e:
+            sentry_sdk.capture_exception(e, extras={
+                "component": "tutoring",
+                "view": "SessionFeedbackView",
+                "user_id": str(request.user.id) if request.user else None,
+                "session_id": session_id
+            })
+            return Response(
+                {"error": f"Failed to submit feedback: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def get(self, request, session_id):
+        """Get existing feedback for a session"""
+        try:
+            user = request.user
+            
+            try:
+                session = ChatSession.objects.get(id=session_id, user=user)
+            except ChatSession.DoesNotExist:
+                return Response(
+                    {"error": "Session not found"}, 
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Check if feedback exists
+            try:
+                feedback = session.feedback
+                serializer = SessionFeedbackSerializer(feedback)
+                return Response(serializer.data)
+            except SessionFeedback.DoesNotExist:
+                return Response(
+                    {"message": "No feedback submitted yet"},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+                
+        except Exception as e:
+            sentry_sdk.capture_exception(e)
+            return Response(
+                {"error": f"Failed to retrieve feedback: {str(e)}"}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
 __all__ = [
     'TutoringSessionStartView', 'TutoringSessionAnswerView',
     'TutoringSessionEndView', 'TutoringSessionDetailView',
-    'SessionInsightsView', 'UserSessionsListView'
+    'SessionInsightsView', 'UserSessionsListView', 'SessionFeedbackView'
 ]

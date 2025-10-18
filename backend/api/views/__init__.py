@@ -10,7 +10,7 @@ from .chat_views import ChatBotView, ChatSessionListView, ChatSessionDetailView
 from .tutoring_views import (
     TutoringSessionStartView, TutoringSessionAnswerView,
     TutoringSessionEndView, TutoringSessionDetailView,
-    SessionInsightsView, UserSessionsListView
+    SessionInsightsView, UserSessionsListView, SessionFeedbackView
 )
 from .rag_views import QueryView
 
@@ -20,5 +20,5 @@ __all__ = [
     'ChatBotView', 'ChatSessionListView', 'ChatSessionDetailView',
     'TutoringSessionStartView', 'TutoringSessionAnswerView',
     'TutoringSessionEndView', 'TutoringSessionDetailView',
-    'SessionInsightsView', 'UserSessionsListView'
+    'SessionInsightsView', 'UserSessionsListView', 'SessionFeedbackView'
 ]

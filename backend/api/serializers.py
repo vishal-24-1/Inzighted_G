@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
-from .models import User, Document, ChatSession, ChatMessage
+from .models import User, Document, ChatSession, ChatMessage, SessionFeedback
 import logging
 from django.db import DatabaseError, IntegrityError
 
@@ -211,3 +211,43 @@ class ChatSessionListSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return None
+
+
+class SessionFeedbackSerializer(serializers.ModelSerializer):
+    """Serializer for session feedback"""
+    
+    class Meta:
+        model = SessionFeedback
+        fields = ('id', 'session', 'rating', 'liked', 'improve', 'skipped', 'created_at')
+        read_only_fields = ('id', 'session', 'created_at')
+    
+    def validate(self, attrs):
+        """Validate that either feedback is provided or skipped is True"""
+        skipped = attrs.get('skipped', False)
+        improve = attrs.get('improve', '').strip()
+        
+        if not skipped and not improve:
+            raise serializers.ValidationError({
+                'improve': 'This field is required unless you skip the feedback.'
+            })
+        
+        return attrs
+
+
+class ProgressSerializer(serializers.Serializer):
+    """
+    Serializer for user gamification progress (Streak and Batch systems)
+    
+    This is a read-only serializer that formats the progress data from
+    the progress.get_progress_summary() function.
+    """
+    
+    streak = serializers.DictField(
+        help_text="Streak system progress with current streak, milestones, and next goal"
+    )
+    batch = serializers.DictField(
+        help_text="Batch system progress with current batch, stars, and XP information"
+    )
+    
+    class Meta:
+        fields = ('streak', 'batch')

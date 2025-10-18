@@ -1,6 +1,7 @@
 import React from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { Calendar, LogOut } from 'lucide-react';
+import BatchWidget from './BatchWidget';
 
 interface UserProfilePopupProps {
   onClose: () => void;
@@ -40,6 +41,11 @@ const UserProfilePopup: React.FC<UserProfilePopupProps> = ({ onClose }) => {
             <h3 className="text-lg font-semibold text-gray-900">{user?.name || 'User'}</h3>
             <p className="text-sm text-gray-500">{user?.email || 'No email'}</p>
           </div>
+        </div>
+
+        {/* Batch Widget - XP & Stars Progress */}
+        <div className="mt-4">
+          <BatchWidget />
         </div>
 
         <div className="mt-4 p-4 bg-gray-50 rounded-xl">

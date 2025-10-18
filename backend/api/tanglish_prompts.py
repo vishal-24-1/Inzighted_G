@@ -3,6 +3,8 @@ Tanglish Agent System Prompts
 Exact prompts from specification for Intent Classifier, Question Generator, and Answer Evaluator
 """
 
+from .language_prompts import REQUIRED_OUTPUT_FORMATS as LANG_REQUIRED_OUTPUT_FORMATS, GAMIFICATION_WRAPPERS as LANG_GAMIFICATION_WRAPPERS
+
 # § 2 — Intent Classifier System Prompt (use Gemini 2.0 Flash)
 def get_intent_classifier_system_prompt(language: str = "tanglish") -> str:
     """Get intent classifier system prompt with dynamic language."""
@@ -90,7 +92,23 @@ def get_question_generator_instructions(language: str = "tanglish") -> str:
     language_phrasing = f"Use {language} phrasing"
     if language.lower() == "tanglish":
         language_phrasing = "Use Tanglish phrasing (Tamil words MUST be transliterated into Latin letters) or English. DO NOT output Tamil in native Tamil script"
-    
+    # Archetypes and guidance (language-agnostic block)
+    archetypes_block = '''
+ARCHETYPE GUIDANCE (how to craft each):
+- Concept Unfold — ask for core idea explanation. Keep conceptual.
+- Critical Reversal — flip an assumption. Ask to critique or find failure cases.
+- Application Sprint — quick applied problem solving. Small numeric or step answer.
+- Explainer Role — ask user to teach as if to a peer.
+- Scenario Repair — present a broken scenario. Ask for fixes.
+- Experimental Thinking — practical, experimental setup or observation. Ask "how would you test...".
+- Debate Card — short pro/con argument prompt.
+'''
+
+    # Required output and gamification are provided by language_prompts dicts (per-language)
+    key = (language or 'tanglish').lower()
+    required_output = LANG_REQUIRED_OUTPUT_FORMATS.get(key, LANG_REQUIRED_OUTPUT_FORMATS.get('tanglish', ''))
+    gamification = LANG_GAMIFICATION_WRAPPERS.get(key, LANG_GAMIFICATION_WRAPPERS.get('tanglish', ''))
+
     return f"""
 RULES for generation (must be implemented):
 1. Generate 10 rule-based questions per session per context.
@@ -102,43 +120,12 @@ RULES for generation (must be implemented):
 7. question_id is auto generated (use format: q_<random_string>).
 8. {language_phrasing}. Keep sentences short (<20 words).
 9. Save which archetype was used for the question.
+10. Where contextually appropriate, rewrite the question in the voice of a popular Tamil Nadu personality (e.g., Rajinikanth, Vijay, or Ajith), using their natural tone, famous dialogue style, or familiar movie references. Only apply this when it enhances engagement — keep the question neutral if forced usage feels unnatural. Ensure academic accuracy remains intact.
+{archetypes_block}
 
-ARCHETYPES (use these exactly):
-- Concept Unfold: ask for core idea explanation. Keep conceptual.
-- Critical Reversal: flip an assumption. Ask to critique or find failure cases.
-- Application Sprint: quick applied problem solving. Small numeric or step answer.
-- Explainer Role: ask user to teach as if to a peer.
-- Scenario Repair: present a broken scenario. Ask for fixes.
-- Experimental Thinking: practical, experimental setup or observation. Ask "how would you test...".
-- Debate Card: short pro/con argument prompt.
+{required_output}
 
-ARCHETYPE GUIDANCE (how to craft each):
-- Concept Unfold — ask for core idea explanation. Keep conceptual.
-- Critical Reversal — flip an assumption. Ask to critique or find failure cases.
-- Application Sprint — quick applied problem solving. Small numeric or step answer.
-- Explainer Role — ask user to teach as if to a peer.
-- Scenario Repair — present a broken scenario. Ask for fixes.
-- Experimental Thinking — practical, experimental setup or observation. Ask "how would you test...".
-- Debate Card — short pro/con argument prompt.
-
-REQUIRED OUTPUT FORMAT:
-Return a JSON array like:
-[
-  {{
-    "question_id": "q_abc123",
-    "archetype": "Concept Unfold",
-    "question_text": "RLC circuit la resonance nadakkum bodhu current-um voltage-um epadi phase la irukkum? Simple-a sollu.",
-    "difficulty": "easy",
-    "expected_answer": "Resonance la current and voltage in phase."
-  }},
-  ...
-]
-
-GAMIFICATION WRAPPERS ({language}) to optionally prepend:
-- "Quick Round: Konjam fast-a sollu."
-- "Challenge: Ithu konjam kashtam."
-- "Explain: Idhai unga mazhiya sollu."
-- "Think: Ithu edhaana problem?"
+{gamification}
 """
 
 def build_question_generation_prompt(context: str, total_questions: int = 10, language: str = "tanglish") -> str:
