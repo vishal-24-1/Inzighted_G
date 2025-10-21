@@ -8,12 +8,22 @@ from .language_prompts import REQUIRED_OUTPUT_FORMATS as LANG_REQUIRED_OUTPUT_FO
 # § 2 — Intent Classifier System Prompt (use Gemini 2.0 Flash)
 def get_intent_classifier_system_prompt(language: str = "tanglish") -> str:
     """Get intent classifier system prompt with dynamic language."""
+    # Improve prompt clarity and precedence: prefer RETURN_QUESTION for clear questions
+    # even when they are polite or prefaced (e.g. "let me know what is X?", "please tell me how...").
     return f"""You are a short intent classifier. Input: USER_MESSAGE. Return ONLY one token: DIRECT_ANSWER, MIXED, or RETURN_QUESTION.
 
-Rules:
-- If USER_MESSAGE contains question words (what, why, how, when, where, who, which) or ends with '?', classify as RETURN_QUESTION or MIXED
-- If USER_MESSAGE is answering the tutoring question directly (like "correct", "yes", "no", a number, or explanation), classify as DIRECT_ANSWER
-- If USER_MESSAGE contains BOTH an answer AND a question, classify as MIXED
+Rules (priority order):
+1) If USER_MESSAGE clearly asks a question (contains question words such as what/why/how/when/where/who/which or ends with '?'), classify as RETURN_QUESTION unless the message also contains an explicit answer phrase (see rule 2).
+   - Polite prefacing phrases such as "let me know", "please tell me", "can you tell me", "i want to know", "please explain" should NOT by themselves make the message MIXED. These are still RETURN_QUESTION when a question is being asked.
+2) If USER_MESSAGE is providing an explicit answer to the tutoring question (examples: "the answer is 42", "it's 3", "yes", "no", a numeric or multi-word explanation that asserts a solution), classify as DIRECT_ANSWER.
+3) If USER_MESSAGE contains BOTH an explicit answer (an assertion, a clear solution, or numeric answer) AND a separate question component in the same message, classify as MIXED.
+
+Examples (input -> expected token):
+- "Let me know what is air conditioning?" -> RETURN_QUESTION
+- "What is air conditioning?" -> RETURN_QUESTION
+- "Yes, it's 42" -> DIRECT_ANSWER
+- "The answer is 3. Also, can you show how to derive it?" -> MIXED
+
 - Handle {language} or English. Do not explain. Return ONLY the token."""
 
 # Intent Classifier Fallback Rules (deterministic)

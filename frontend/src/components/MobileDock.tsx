@@ -40,7 +40,8 @@ const MobileDock: React.FC<MobileDockProps> = ({ homeRoute = '/', boostRoute = '
     return (
         <nav
                 aria-label="Mobile dock"
-                className={`fixed bottom-2 left-0 right-0 mx-auto max-w-sm px-2 z-30 ${className}`}
+                className={`fixed bottom-2 left-0 right-0 mx-auto max-w-sm px-2 z-30 mobile-dock ${className}`}
+                data-tour="mobile-dock"
             >
             <div className="bg-white/95 border border-gray-200 rounded-2xl shadow-sm px-1 py-1 flex items-center justify-between gap-1">
                 {items.map((it) => {

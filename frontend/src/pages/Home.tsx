@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { documentsAPI, tutoringAPI } from '../utils/api';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { useAuth } from '../utils/AuthContext';
 import DocumentSelector from '../components/DocumentSelector';
 import UserProfilePopup from '../components/UserProfilePopup';
 import Sidebar from '../components/Sidebar';
@@ -8,6 +9,8 @@ import { FileText, Send, Rocket, UserRound, Mic, X } from 'lucide-react';
 import MobileDock from '../components/MobileDock';
 import UploadPromptModal from '../components/UploadPromptModal';
 import StreakWidget from '../components/StreakWidget';
+import { OnboardingManager, hasCompletedOnboarding, TourPrompt } from '../components/onboarding';
+import AppTour from '../components/onboarding/AppTour';
 import logo from '../logo.svg';
 
 // runtime feature detection is used below; avoid global type redeclarations
@@ -15,6 +18,7 @@ import logo from '../logo.svg';
 const Home: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [chatInput, setChatInput] = useState('');
   const [isListening, setIsListening] = useState(false);
@@ -31,6 +35,9 @@ const Home: React.FC = () => {
   const [showUploadPromptModal, setShowUploadPromptModal] = useState(false);
   const [duplicateDocument, setDuplicateDocument] = useState<any | null>(null);
   const [preselectDocumentId, setPreselectDocumentId] = useState<string | null>(null);
+  const [showOnboarding, setShowOnboarding] = useState(true);
+  const [showTourPrompt, setShowTourPrompt] = useState(false);
+  const [showHomeTour, setShowHomeTour] = useState(false);
 
   useEffect(() => {
     // If another page navigated here with intent to open the upload prompt, handle it.
@@ -267,8 +274,74 @@ const Home: React.FC = () => {
     setShowProfilePopup(false);
   };
 
+  const handleOnboardingComplete = () => {
+    setShowOnboarding(false);
+  };
+
+  const handleWelcomeClose = () => {
+    // User closed the welcome screen - show the tour prompt (blurred home with "Start Tour" button)
+    setShowOnboarding(false);
+    setTimeout(() => setShowTourPrompt(true), 200);
+  };
+
+  const handleStartTour = () => {
+    // User clicked "Start Tour" from the tour prompt
+    setShowTourPrompt(false);
+    setTimeout(() => setShowHomeTour(true), 200);
+  };
+
+  const handleSkipTour = () => {
+    // User skipped the tour from the tour prompt
+    if (user?.id) markOnboardingCompleteForUser(user.id);
+    setShowTourPrompt(false);
+  };
+
+  const markOnboardingCompleteForUser = (userId: string) => {
+    try {
+      const key = 'inzighted_onboarding_completed';
+      const existing = localStorage.getItem(key);
+      const data = existing ? JSON.parse(existing) : {};
+      data[userId] = { completed: true, completedAt: new Date().toISOString() };
+      localStorage.setItem(key, JSON.stringify(data));
+    } catch (e) {
+      console.error('Error persisting onboarding completion', e);
+    }
+  };
+
+  const handleHomeTourComplete = () => {
+    if (user?.id) markOnboardingCompleteForUser(user.id);
+    setShowHomeTour(false);
+  };
+
+  const handleHomeTourSkip = () => {
+    if (user?.id) markOnboardingCompleteForUser(user.id);
+    setShowHomeTour(false);
+  };
+
   return (
     <>
+      {/* Step 1: Welcome Screen - Full screen with close button */}
+      {showOnboarding && user && (
+        <OnboardingManager
+          userId={user.id}
+          onComplete={handleOnboardingComplete}
+          onWelcomeClose={handleWelcomeClose}
+        />
+      )}
+
+      {/* Step 2: Tour Prompt - Blurred home with "Start Tour" button */}
+      {showTourPrompt && (
+        <TourPrompt
+          onStartTour={handleStartTour}
+          onSkip={handleSkipTour}
+        />
+      )}
+
+      {/* Step 3: Interactive Tour - Runs on actual home page */}
+      {showHomeTour && (
+        <AppTour run={true} onComplete={handleHomeTourComplete} onSkip={handleHomeTourSkip} />
+      )}
+
       {/* Decorative grid background (very back). Fixed so it sits behind the whole app including MobileDock. */}
       <div
         aria-hidden
@@ -294,7 +367,9 @@ const Home: React.FC = () => {
 
             <div className="flex items-center gap-2">
               {/* Streak Widget - prominent position */}
-              <StreakWidget />
+              <div data-tour="streak">
+                <StreakWidget />
+              </div>
               
               <button
                 type="button"

@@ -54,7 +54,7 @@ const StreakWidget: React.FC = () => {
       <button
         onClick={() => setShowModal(true)}
         className={`
-          relative flex items-center gap-2 px-3 py-2 rounded-lg 
+          streak-widget relative flex items-center gap-2 px-3 py-2 rounded-lg 
           bg-gradient-to-r from-orange-100 to-red-100 
           hover:from-orange-200 hover:to-red-200
           transition-all duration-300 shadow-sm hover:shadow-md

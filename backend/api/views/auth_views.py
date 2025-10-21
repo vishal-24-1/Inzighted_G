@@ -57,6 +57,9 @@ class LoginView(APIView):
 				'refresh': str(refresh),
 				'access': str(refresh.access_token),
 			})
+		# Log validation errors for debugging
+		logger.error(f'Login validation errors: {serializer.errors}')
+		logger.error(f'Login request data: {request.data}')
 		return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 

@@ -18,6 +18,7 @@ interface AuthContextType {
   googleLogin: (credential: string) => Promise<void>;
   logout: () => void;
   loading: boolean;
+  isFirstTimeLogin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -37,6 +38,7 @@ interface AuthProviderProps {
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isFirstTimeLogin, setIsFirstTimeLogin] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem('access_token');
@@ -64,6 +66,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.setItem('access_token', access);
     localStorage.setItem('refresh_token', refresh);
     setUser(user);
+    setIsFirstTimeLogin(true); // Mark as first-time login
   };
 
   const register = async (email: string, username: string, name: string, password: string, password_confirm: string, preferred_language?: string) => {
@@ -73,6 +76,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.setItem('access_token', access);
     localStorage.setItem('refresh_token', refresh);
     setUser(user);
+    setIsFirstTimeLogin(true); // Mark as first-time login for new registrations
   };
 
   const googleLogin = async (credential: string) => {
@@ -82,6 +86,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     localStorage.setItem('access_token', access);
     localStorage.setItem('refresh_token', refresh);
     setUser(user);
+    setIsFirstTimeLogin(true); // Mark as first-time login
   };
 
   const updateProfile = async (data: any) => {
@@ -103,6 +108,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     logout,
     loading,
     updateProfile,
+    isFirstTimeLogin,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

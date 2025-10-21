@@ -48,7 +48,7 @@ if SENTRY_DSN:
 SECRET_KEY = "django-insecure-&pgzg*q&wfr2u!ng&+(dn-rs%bbhd&@bfv(hptx75$cyp9-4m8"
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True
 
 ALLOWED_HOSTS = ["localhost", "127.0.0.1", "app.inzighted.com","server.inzighted.com", "3.215.97.244"]
 
