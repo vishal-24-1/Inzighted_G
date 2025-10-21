@@ -6,6 +6,7 @@ import time
 from ..rag_query import query_rag
 from ..models import ChatSession, ChatMessage
 from ..serializers import ChatSessionListSerializer, ChatSessionSerializer, ChatMessageSerializer
+from ..message_validation import is_emoji_only, is_gibberish
 
 
 class ChatBotView(APIView):
@@ -27,6 +28,19 @@ class ChatBotView(APIView):
 
 			chat_session = self._get_or_create_session(user, session_id)
 			user_message = ChatMessage.objects.create(session=chat_session, user=user, content=message, is_user_message=True)
+
+			# Validate message for emoji-only or gibberish (skip irrelevance check for chat)
+			if is_emoji_only(message):
+				corrective_response = "I noticed you reacted with an emoji. Could you please send your message in words so I can help you better?"
+				ai_message = ChatMessage.objects.create(session=chat_session, user=user, content=corrective_response, is_user_message=False, response_time_ms=0, token_count=len(corrective_response.split()))
+				chat_session.save()
+				return Response({"response": corrective_response, "user_message": message, "session_id": str(chat_session.id), "message_id": str(ai_message.id), "response_time_ms": 0})
+			
+			if is_gibberish(message):
+				corrective_response = "I couldn't understand that message. Could you please rephrase your question more clearly?"
+				ai_message = ChatMessage.objects.create(session=chat_session, user=user, content=corrective_response, is_user_message=False, response_time_ms=0, token_count=len(corrective_response.split()))
+				chat_session.save()
+				return Response({"response": corrective_response, "user_message": message, "session_id": str(chat_session.id), "message_id": str(ai_message.id), "response_time_ms": 0})
 
 			start_time = time.time()
 			response = query_rag(user_id, message)

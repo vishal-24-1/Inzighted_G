@@ -8,6 +8,7 @@ from .gemini_client import gemini_client
 from .rag_ingestion import initialize_pinecone, get_embedding_client
 from .auth import get_tenant_tag
 from .tanglish_prompts import strip_gamification_prefix
+from .message_validation import categorize_invalid_message, get_corrective_message
 import logging
 import sentry_sdk
 import uuid
@@ -365,6 +366,37 @@ class TutorAgent:
                 "session_complete": False,
                 "evaluation": None
             }
+        
+        # § 1.3.5 — MESSAGE VALIDATION: Check if message is valid before processing
+        # Validate for emoji-only, gibberish, or irrelevant answers
+        print(f"[AGENT] Validating user message...")
+        invalid_category = categorize_invalid_message(
+            user_message, 
+            current_question_item.question_text,
+            current_question_item.expected_answer
+        )
+        
+        if invalid_category:
+            # Message is invalid - return corrective message and re-ask question
+            print(f"[AGENT] ⚠️ Invalid message detected: category={invalid_category}")
+            corrective_reply = get_corrective_message(
+                invalid_category,
+                current_question_item.question_text,
+                self.language
+            )
+            
+            logger.info(f"[AGENT] Rejecting invalid message (category={invalid_category}): '{user_message[:50]}'")
+            
+            # DO NOT evaluate, DO NOT advance question
+            # Return corrective message - same question remains current
+            return {
+                "reply": corrective_reply,
+                "next_question": None,
+                "session_complete": False,
+                "evaluation": None
+            }
+        
+        print(f"[AGENT] ✅ Message validation passed")
         
         # § 1.4 — Classify intent using Gemini with user's language preference
         print(f"[AGENT] Calling intent classifier...")
