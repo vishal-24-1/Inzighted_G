@@ -286,7 +286,7 @@ def is_irrelevant_answer(user_message: str, question_text: str, expected_answer:
                 "Task: Return a single number between 0 and 1 indicating how relevant the user answer is to the question "
                 "(0 = completely irrelevant, 1 = fully relevant). Return only the number."
             )
-            llm_resp = gemini_client.generate_response(llm_prompt, max_tokens=16)
+            llm_resp = gemini_client.generate_response(llm_prompt, max_tokens=16, max_words=15)
             if DEBUG_LOGGING:
                 logger.debug(f"[VALIDATION] Irrelevance LLM response: '{llm_resp}'")
 
@@ -340,6 +340,23 @@ def is_admission_of_ignorance(user_message: str) -> bool:
     return False
 
 
+def enforce_max_words(text: str, max_words: int = 15) -> str:
+    """
+    Truncate the given text to at most max_words words. Preserve punctuation at end if present.
+    Returns the truncated string.
+    """
+    if not text:
+        return text
+    words = text.strip().split()
+    if len(words) <= max_words:
+        return text.strip()
+    truncated = ' '.join(words[:max_words]).strip()
+    # Ensure the truncated text ends with a punctuation mark for readability
+    if not re.search(r"[.!?]$", truncated):
+        truncated = truncated + '...'
+    return truncated
+
+
 def categorize_invalid_message(
     user_message: str, 
     current_question_text: str, 
@@ -368,6 +385,43 @@ def categorize_invalid_message(
                 logger.debug(f"[VALIDATION] Admission of ignorance accepted: '{user_message}'")
             return None
 
+        # If LLM intent classifier is available, check if user is asking a RETURN_QUESTION or MIXED.
+        # For both cases, accept the message as valid if it contains a genuine question component
+        # (only reject if it's a meta/platform off-topic question).
+        if HAS_LLM_CLIENT and gemini_client and gemini_client.is_available():
+            try:
+                intent_token = gemini_client.classify_intent(user_message)
+                if DEBUG_LOGGING:
+                    logger.debug(f"[VALIDATION] Intent classifier token: {intent_token}")
+                
+                # For RETURN_QUESTION and MIXED: only reject if meta/platform query detected
+                if intent_token in ['RETURN_QUESTION', 'MIXED']:
+                    # Check only for meta/platform phrases (not general irrelevance)
+                    msg_lower = user_message.lower().strip()
+                    meta_phrases = [
+                        'price', 'pricing', 'cost', 'how much', 'subscription', 'plan', 'buy', 'purchase',
+                        'profile photo', 'change profile', 'edit profile', 'account settings',
+                        'how to contact', 'contact support', 'support', 'help center', 'refund',
+                        'what does this product do', 'what is this product', 'where to change', 'where can i',
+                        'chatbot', 'what is this platform', 'demo', 'download app'
+                    ]
+                    
+                    is_meta_query = any(p in msg_lower for p in meta_phrases)
+                    
+                    if is_meta_query:
+                        if DEBUG_LOGGING:
+                            logger.debug(f"[VALIDATION] {intent_token} contains meta/platform query; flagging as irrelevant: '{user_message}'")
+                        return 'irrelevant'
+                    else:
+                        if DEBUG_LOGGING:
+                            logger.debug(f"[VALIDATION] {intent_token} intent accepted as valid: '{user_message}'")
+                        return None
+                        
+            except Exception as e:
+                # classifier failure should not block validation; fall back to heuristics
+                if DEBUG_LOGGING:
+                    logger.debug(f"[VALIDATION] Intent classifier failed: {e}")
+
         # New: Short-answer handling (1-3 words)
         # If a user responds with 1-3 words, mark as potentially insufficient and optionally ask LLM
         short_words = None
@@ -388,7 +442,7 @@ def categorize_invalid_message(
                         "If the answer needs a brief explanation respond with the single phrase: needs explanation. "
                         "If the answer is invalid respond with the single word: invalid."
                     )
-                    llm_resp = gemini_client.generate_response(prompt, max_tokens=16)
+                    llm_resp = gemini_client.generate_response(prompt, max_tokens=16, max_words=15)
                     if DEBUG_LOGGING:
                         logger.debug(f"[VALIDATION] Short-answer LLM response: '{llm_resp}'")
 
@@ -476,7 +530,7 @@ def categorize_invalid_message(
         return None
 
 
-def get_corrective_message(category: str, question_text: str, language: str = "tanglish") -> str:
+def get_corrective_message(category: str, question_text: str, language: str = "tanglish", user_message: Optional[str] = None) -> str:
     """
     Get corrective message for invalid input category.
     
@@ -501,10 +555,46 @@ def get_corrective_message(category: str, question_text: str, language: str = "t
             "gibberish": "I couldn't understand that response. Please konjam clear ah answer pannunga based on the question.",
             "irrelevant": "I cannot answer that. Do you have any question relevant to the original question?"
         }
-    
+
+    # If category is 'irrelevant', and we have an LLM, try to generate a tailored corrective message
+    if category == 'irrelevant' and HAS_LLM_CLIENT and gemini_client and gemini_client.is_available():
+        try:
+            # Build a short system-style prompt to produce a concise corrective message
+            lang_label = 'English' if language == 'english' else 'Tanglish'
+            lm_prompt = (
+                f"You are a polite tutoring assistant that corrects off-topic student replies."
+                f"\nLanguage: {lang_label}. Keep the message concise (<= 30 words)."
+                "\nTask: The user sent an off-topic question or comment. Generate a single short reply that says you cannot answer that and asks the user to provide a question or answer relevant to the original tutoring question."
+            )
+            if user_message:
+                lm_prompt += f"\nUser message: {user_message}"
+            lm_prompt += f"\nRe-ask the original question at the end. Output only the reply text."
+
+            lm_resp = gemini_client.generate_response(lm_prompt, max_tokens=80, max_words=15)
+            if lm_resp and isinstance(lm_resp, str) and lm_resp.strip():
+                # Use LLM-generated message but ensure we append the re-asked question (if not already present)
+                reply = lm_resp.strip()
+                # Enforce concise reply (<= 15 words) for the initial corrective sentence
+                concise = enforce_max_words(reply, max_words=15)
+                if question_text not in reply:
+                    return concise + f"\n\nLet me repeat the question:\n{question_text}"
+                # If LLM already included the question, still ensure first part is concise
+                return concise
+
+        except Exception as e:
+            logger.error(f"[VALIDATION] Failed to generate tailored corrective message: {e}")
+            sentry_sdk.capture_exception(e, extras={
+                "component": "message_validation",
+                "method": "get_corrective_message_llm",
+                "user_message": (user_message or '')[:100]
+            })
+
     base_message = corrective_messages.get(category, corrective_messages["gibberish"])
-    
+
+    # Enforce concise base message
+    concise_base = enforce_max_words(base_message, max_words=15)
+
     # Re-ask the question
     reask_prompt = f"\n\nLet me repeat the question:\n{question_text}"
-    
-    return base_message + reask_prompt
+
+    return concise_base + reask_prompt

@@ -122,7 +122,8 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
             
             fallback_response = gemini_client.generate_response(
                 fallback_prompt.format(query=query), 
-                max_tokens=800
+                max_tokens=800,
+                max_words=15
             )
             
             # Add a note that this is general knowledge
@@ -202,7 +203,8 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
             try:
                 fallback_response = gemini_client.generate_response(
                     fallback_prompt.format(query=query), 
-                    max_tokens=800
+                    max_tokens=800,
+                    max_words=15
                 )
                 
                 if fallback_response and not fallback_response.startswith("Error:"):

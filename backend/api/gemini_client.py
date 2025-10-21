@@ -51,7 +51,7 @@ class GeminiLLMClient:
             sentry_sdk.capture_exception(e)
             self.api_key = None
     
-    def generate_response(self, prompt: str, max_tokens: int = 1000) -> str:
+    def generate_response(self, prompt: str, max_tokens: int = 1000, max_words: int | None = None) -> str:
         """
         Generate response using Gemini 2.0 Flash model via direct HTTP API
         
@@ -101,7 +101,16 @@ class GeminiLLMClient:
                         text = self._extract_text_from_response(result)
                         if text:
                             # success
-                            return text.strip()
+                            out = text.strip()
+                            # If caller requested a max_words limit, enforce it here
+                            if max_words and isinstance(max_words, int) and max_words > 0:
+                                parts = out.split()
+                                if len(parts) > max_words:
+                                    out = ' '.join(parts[:max_words])
+                                    # add ellipsis for clarity
+                                    if not out.endswith(('.', '!', '?')):
+                                        out = out.rstrip(' .,!?') + '...'
+                            return out
 
                         logger.error(f"Gemini response could not be parsed into text. Raw response: {json.dumps(result, indent=2)}")
                         return "Error: Received empty or filtered response from the AI model."
