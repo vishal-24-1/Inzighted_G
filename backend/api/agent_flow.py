@@ -353,6 +353,37 @@ class TutorAgent:
             
             # User asked another follow-up question - answer it and append proceed prompt inline
             print(f"[AGENT] User asked follow-up question, will answer and append proceed prompt inline")
+            # Before answering follow-up content, validate the message to ensure it's not
+            # emoji/gibberish/irrelevant. If invalid, return corrective reply instead of
+            # calling RAG. This enforces validation-first ordering.
+            try:
+                invalid_category = categorize_invalid_message(
+                    user_message,
+                    current_question_item.question_text,
+                    current_question_item.expected_answer
+                )
+            except Exception as e:
+                # If validation unexpectedly fails, log and proceed to answering so we
+                # don't block the user flow. Validation errors should be rare.
+                logger.error(f"[AGENT] Message validation failed in proceed-branch: {e}")
+                invalid_category = None
+
+            if invalid_category:
+                # Return corrective message and do not call RAG
+                corrective_reply = get_corrective_message(
+                    invalid_category,
+                    current_question_item.question_text,
+                    self.language,
+                    user_message=user_message
+                )
+                logger.info(f"[AGENT] Rejecting invalid follow-up message (category={invalid_category}): '{user_message[:50]}'")
+                return {
+                    "reply": corrective_reply,
+                    "next_question": None,
+                    "session_complete": False,
+                    "evaluation": None
+                }
+
             try:
                 clarification_reply = self._answer_user_question_with_rag(user_message, current_question_item)
             except Exception as e:

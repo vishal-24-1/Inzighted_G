@@ -253,14 +253,6 @@ def is_irrelevant_answer(user_message: str, question_text: str, expected_answer:
         logger.debug(f"[VALIDATION] Relevance check: matched={matched_keywords}/{len(q_keywords)}, "
                     f"score={relevance_score:.2f}, irrelevant={is_irrelevant}")
     
-    # Additional heuristic: if message is very generic and doesn't match any keyword
-    generic_phrases = ['i like', 'my favorite', 'i think', 'i believe', 'in my opinion',
-                       'what is your', 'who are you', 'tell me about yourself']
-    if any(phrase in msg_lower for phrase in generic_phrases) and matched_keywords == 0:
-        if DEBUG_LOGGING:
-            logger.debug(f"[VALIDATION] Detected generic irrelevant phrase")
-        return True, 0.1
-
     # Additional: Detect product/platform meta-questions that are off-topic (support, pricing, profile, chatbot info)
     meta_phrases = [
         'price', 'pricing', 'cost', 'how much', 'subscription', 'plan', 'buy', 'purchase',
@@ -276,6 +268,32 @@ def is_irrelevant_answer(user_message: str, question_text: str, expected_answer:
                 logger.debug(f"[VALIDATION] Detected meta/platform question phrase: '{p}'")
             # Consider meta-questions irrelevant with low relevance score
             return True, 0.0
+
+    # If the user asked a question (question mark or common interrogative starter)
+    # and that question contains keywords from the original question (or shares
+    # enough token overlap), consider it relevant rather than irrelevant.
+    is_question = False
+    try:
+        if '?' in user_message or re.match(r"^(what|who|how|when|where|why|which|is|are|do|does|did|can|could|should)\b", msg_lower):
+            is_question = True
+    except Exception:
+        is_question = False
+
+    if is_question:
+        # treat as relevant if there's any keyword overlap or token overlap with question
+        token_overlap = any(w for w in q_words if len(w) > 2 and re.search(r"\b" + re.escape(w) + r"\b", msg_lower))
+        if matched_keywords > 0 or token_overlap:
+            if DEBUG_LOGGING:
+                logger.debug(f"[VALIDATION] User asked a related question; treating as relevant (matched={matched_keywords})")
+            return False, max(relevance_score, 0.6)
+
+    # Additional heuristic: if message is very generic and doesn't match any keyword
+    generic_phrases = ['i like', 'my favorite', 'i think', 'i believe', 'in my opinion',
+                       'what is your', 'who are you', 'tell me about yourself']
+    if any(phrase in msg_lower for phrase in generic_phrases) and matched_keywords == 0:
+        if DEBUG_LOGGING:
+            logger.debug(f"[VALIDATION] Detected generic irrelevant phrase")
+        return True, 0.1
 
     # If LLM is available, ask it to decide relevance when keyword heuristics are inconclusive
     if HAS_LLM_CLIENT and gemini_client and gemini_client.is_available():
@@ -385,42 +403,12 @@ def categorize_invalid_message(
                 logger.debug(f"[VALIDATION] Admission of ignorance accepted: '{user_message}'")
             return None
 
-        # If LLM intent classifier is available, check if user is asking a RETURN_QUESTION or MIXED.
-        # For both cases, accept the message as valid if it contains a genuine question component
-        # (only reject if it's a meta/platform off-topic question).
-        if HAS_LLM_CLIENT and gemini_client and gemini_client.is_available():
-            try:
-                intent_token = gemini_client.classify_intent(user_message)
-                if DEBUG_LOGGING:
-                    logger.debug(f"[VALIDATION] Intent classifier token: {intent_token}")
-                
-                # For RETURN_QUESTION and MIXED: only reject if meta/platform query detected
-                if intent_token in ['RETURN_QUESTION', 'MIXED']:
-                    # Check only for meta/platform phrases (not general irrelevance)
-                    msg_lower = user_message.lower().strip()
-                    meta_phrases = [
-                        'price', 'pricing', 'cost', 'how much', 'subscription', 'plan', 'buy', 'purchase',
-                        'profile photo', 'change profile', 'edit profile', 'account settings',
-                        'how to contact', 'contact support', 'support', 'help center', 'refund',
-                        'what does this product do', 'what is this product', 'where to change', 'where can i',
-                        'chatbot', 'what is this platform', 'demo', 'download app'
-                    ]
-                    
-                    is_meta_query = any(p in msg_lower for p in meta_phrases)
-                    
-                    if is_meta_query:
-                        if DEBUG_LOGGING:
-                            logger.debug(f"[VALIDATION] {intent_token} contains meta/platform query; flagging as irrelevant: '{user_message}'")
-                        return 'irrelevant'
-                    else:
-                        if DEBUG_LOGGING:
-                            logger.debug(f"[VALIDATION] {intent_token} intent accepted as valid: '{user_message}'")
-                        return None
-                        
-            except Exception as e:
-                # classifier failure should not block validation; fall back to heuristics
-                if DEBUG_LOGGING:
-                    logger.debug(f"[VALIDATION] Intent classifier failed: {e}")
+        # NOTE: Intent classification (RETURN_QUESTION / MIXED) is intentionally
+        # performed by the agent flow (higher-level logic). Message validation
+        # should run first and mark clearly invalid messages (emoji/gibberish/irrelevant)
+        # before any intent classifier can override the decision. Any classifier
+        # related logic has been moved to the agent layer to keep validation
+        # deterministic and free of side-effects.
 
         # New: Short-answer handling (1-3 words)
         # If a user responds with 1-3 words, mark as potentially insufficient and optionally ask LLM
