@@ -247,9 +247,6 @@ const DocumentSelector: React.FC<DocumentSelectorProps> = ({ onDocumentSelect, o
                               </div>
                             </div>
                             <div className="flex items-center gap-2">
-                              <div className="text-sm font-medium" style={{ color: getStatusColor(doc.status) }}>
-                                Ready
-                              </div>
                               <input
                                 type="checkbox"
                                 checked={selectedIds.has(doc.id)}

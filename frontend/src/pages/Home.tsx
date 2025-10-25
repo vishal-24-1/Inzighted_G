@@ -1,19 +1,100 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { documentsAPI, tutoringAPI } from '../utils/api';
+import { documentsAPI, tutoringAPI, progressAPI } from '../utils/api';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../utils/AuthContext';
 import DocumentSelector from '../components/DocumentSelector';
 import UserProfilePopup from '../components/UserProfilePopup';
 import Sidebar from '../components/Sidebar';
-import { FileText, Send, Rocket, UserRound, Mic, X } from 'lucide-react';
+import { FileText, Send, Rocket, UserRound, Mic, X, Flame } from 'lucide-react';
 import MobileDock from '../components/MobileDock';
 import UploadPromptModal from '../components/UploadPromptModal';
-import StreakWidget from '../components/StreakWidget';
+import StreakModal from '../components/StreakModal';
+import { ProgressResponse } from '../types/progress';
 import { OnboardingManager, hasCompletedOnboarding, TourPrompt } from '../components/onboarding';
 import AppTour from '../components/onboarding/AppTour';
 import logo from '../logo.svg';
 
 // runtime feature detection is used below; avoid global type redeclarations
+
+// Inlined StreakWidget (previously in src/components/StreakWidget.tsx)
+type StreakWidgetProps = {
+  onOpen?: (progress: ProgressResponse, refresh: () => void) => void;
+};
+
+const StreakWidget: React.FC<StreakWidgetProps> = ({ onOpen }) => {
+  const [progress, setProgress] = useState<ProgressResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [pulseAnimation, setPulseAnimation] = useState(false);
+
+  useEffect(() => {
+    fetchProgress();
+  }, []);
+
+  const fetchProgress = async () => {
+    try {
+      const response = await progressAPI.getProgress();
+      const newProgress = response.data as ProgressResponse;
+
+      // Trigger pulse animation if there's a newly earned milestone
+      if (newProgress.newly_earned_milestone) {
+        setPulseAnimation(true);
+        setTimeout(() => setPulseAnimation(false), 2000);
+      }
+
+      setProgress(newProgress);
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to fetch progress:', error);
+      setLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-orange-100 to-red-100 rounded-lg animate-pulse">
+        <div className="w-5 h-5 bg-orange-300 rounded"></div>
+        <div className="w-8 h-4 bg-orange-300 rounded"></div>
+      </div>
+    );
+  }
+
+  if (!progress) {
+    return null;
+  }
+
+  const streakCount = progress.streak.current;
+  const isActive = streakCount > 0;
+
+  return (
+    <>
+      <button
+        onClick={() => onOpen ? onOpen(progress as ProgressResponse, fetchProgress) : null}
+        className={`
+          relative flex items-center gap-2 px-3 py-2 rounded-full 
+          bg-gray-100 h-10
+          ${pulseAnimation ? 'animate-pulse scale-105' : ''}
+        `}
+        title="Your learning streak"
+        aria-label={`Current streak: ${streakCount} days`}
+      >
+        <Flame
+          size={20}
+          className={'text-orange-500'}
+        />
+        <span className="text-lg font-bold text-gray-800">
+          {streakCount}
+        </span>
+
+        {/* Pulsing indicator for active streak */}
+        {isActive && (
+          <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full animate-ping" />
+        )}
+      </button>
+
+      {/* Modal is lifted to Home so it shares the same layer as other top-level popups */}
+    </>
+  );
+};
 
 const Home: React.FC = () => {
   const navigate = useNavigate();
@@ -38,6 +119,11 @@ const Home: React.FC = () => {
   const [showOnboarding, setShowOnboarding] = useState(true);
   const [showTourPrompt, setShowTourPrompt] = useState(false);
   const [showHomeTour, setShowHomeTour] = useState(false);
+  // Streak modal data lifted here so modal shares the same layer as profile modal
+  const [streakModalData, setStreakModalData] = useState<{
+    progress: ProgressResponse;
+    refresh: () => void;
+  } | null>(null);
 
   useEffect(() => {
     // If another page navigated here with intent to open the upload prompt, handle it.
@@ -357,20 +443,22 @@ const Home: React.FC = () => {
       <div className="relative w-full min-h-screen text-gray-900 p-4 pb-24 flex flex-col overflow-hidden">
         <header className="relative z-20 mb-4">
           <div className="flex items-center justify-between">
-            <button
-              className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
-              aria-label="Open profile"
-              onClick={handleProfileClick}
-            >
-              <UserRound size={18} strokeWidth={2.5} />
-            </button>
+            {/* Left: logo */}
+            <div className="flex items-center">
+              <a className="flex items-center gap-3 pointer-events-auto">
+                <img src={logo} alt="InzightEd" className="h-5 w-auto mt-1" />
+              </a>
+            </div>
 
+            {/* Right: streak, library and profile (grouped) */}
             <div className="flex items-center gap-2">
               {/* Streak Widget - prominent position */}
               <div data-tour="streak">
-                <StreakWidget />
+                <StreakWidget onOpen={(progress, refresh) => {
+                  if (progress) setStreakModalData({ progress, refresh });
+                }} />
               </div>
-              
+
               <button
                 type="button"
                 onClick={() => setShowDocumentSelector(true)}
@@ -380,14 +468,15 @@ const Home: React.FC = () => {
               >
                 <FileText size={18} strokeWidth={2.5} />
               </button>
-            </div>
-          </div>
 
-          {/* Centered logo: absolutely positioned so it's centered regardless of left/right widths */}
-          <div className="absolute left-1/2 top-1/2 transform -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-            <a className="flex items-center gap-3 pointer-events-auto">
-              <img src={logo} alt="InzightEd" className="h-5 w-auto mt-1" />
-            </a>
+              <button
+                className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
+                aria-label="Open profile"
+                onClick={handleProfileClick}
+              >
+                <UserRound size={18} strokeWidth={2.5} />
+              </button>
+            </div>
           </div>
         </header>
 
@@ -409,14 +498,14 @@ const Home: React.FC = () => {
 
         <main className="flex-1 flex flex-col items-center justify-center space-y-6 md:ml-72">
 
-            {/* Small notification toast for duplicate-upload / info messages */}
-            {notificationMessage && (
-              <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50">
-                <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 px-4 py-2 rounded shadow">
-                  {notificationMessage}
-                </div>
+          {/* Small notification toast for duplicate-upload / info messages */}
+          {notificationMessage && (
+            <div className="fixed top-6 left-1/2 transform -translate-x-1/2 z-50">
+              <div className="bg-yellow-100 border border-yellow-300 text-yellow-800 px-4 py-2 rounded shadow">
+                {notificationMessage}
               </div>
-            )}
+            </div>
+          )}
 
           <div className="w-full flex-1 flex flex-col items-center justify-center -mt-20 md:-mt-8">
             <h2 className="text-xl text-center mb-4">Learn more <br /> about yourself</h2>
@@ -522,6 +611,19 @@ const Home: React.FC = () => {
         {showProfilePopup && (
           <div className="fixed inset-0 z-50 flex items-center justify-center">
             <UserProfilePopup onClose={handleCloseProfilePopup} />
+          </div>
+        )}
+
+        {/* Streak Modal (lifted to same layer as profile popup) */}
+        {streakModalData && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="w-full max-w-lg">
+              <StreakModal
+                progress={streakModalData.progress}
+                onClose={() => setStreakModalData(null)}
+                onRefresh={() => streakModalData.refresh()}
+              />
+            </div>
           </div>
         )}
 

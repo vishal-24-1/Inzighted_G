@@ -19,9 +19,19 @@ const StreakModal: React.FC<StreakModalProps> = ({ progress, onClose, onRefresh 
       onClick={onClose}
     >
       <div 
-        className="bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl"
+        className="relative bg-white rounded-2xl p-6 max-w-md w-full shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
+        {/* Close button (top-right) - match UserProfilePopup style */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="absolute top-3 right-3 inline-flex items-center justify-center w-8 h-8 rounded-full text-gray-600 hover:bg-gray-100"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
@@ -33,13 +43,6 @@ const StreakModal: React.FC<StreakModalProps> = ({ progress, onClose, onRefresh 
               <p className="text-sm text-gray-500">Keep learning daily!</p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors"
-            aria-label="Close"
-          >
-            <X size={24} />
-          </button>
         </div>
 
         {/* Current Streak Display */}

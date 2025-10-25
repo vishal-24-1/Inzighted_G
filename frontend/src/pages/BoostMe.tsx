@@ -406,47 +406,32 @@ const BoostMe: React.FC = () => {
           </div>
         ) : insights ? (
           <div>
-            {/* Zone Cards Carousel */}
-            <div className="overflow-hidden w-full">
-              <div
-                className="flex transition-transform duration-300"
-                style={{ width: `${cardCount * 100}%`, transform: `translateX(-${currentCardIndex * (100 / cardCount)}%)` }}
-                onTouchStart={onTouchStart}
-                onTouchMove={onTouchMove}
-                onTouchEnd={onTouchEnd}
-              >
-                {boostMeCards.map((card, index) => (
-                  <div key={index} className="pb-4" style={{ width: `${100 / cardCount}%` }}>
-                    <div
-                      className="rounded-xl p-2 h-full"
-                      style={{
-                        backgroundImage: `linear-gradient(135deg, ${hexToRgba(card.color, 0.18)}, ${hexToRgba(card.color, 0.36)})`
-                      }}
-                    >
-                      <div className="flex items-center mb-2 pl-2 pt-2">
-                        <div>
-                          <h3 className="text-lg font-semibold text-gray-800">{card.type}</h3>
-                          <p className="text-xs text-gray-500">{card.description}</p>
-                        </div>
-                      </div>
-                      <div className="text-sm text-gray-700 text-left bg-white rounded-lg px-2 py-4">
-                        {Array.isArray(card.content) && card.content.length > 0 ? (
-                          <ul className="list-disc pl-5 space-y-2">
-                            {card.content.map((item, idx) => (
-                              <li key={idx}>{item}</li>
-                            ))}
-                          </ul>
-                        ) : (
-                          <p className="text-gray-500 italic">No insights available</p>
-                        )}
-                      </div>
+            {/* Zone Cards (stacked vertically) */}
+            <div className="w-full space-y-4">
+              {boostMeCards.map((card, index) => (
+                <div key={index} className="rounded-xl p-2" style={{ backgroundImage: `linear-gradient(135deg, ${hexToRgba(card.color, 0.18)}, ${hexToRgba(card.color, 0.36)})` }}>
+                  <div className="flex items-center mb-2 pl-2 pt-2">
+                    <div>
+                      <h3 className="text-lg font-semibold text-gray-800">{card.type}</h3>
+                      <p className="text-xs text-gray-500">{card.description}</p>
                     </div>
                   </div>
-                ))}
-              </div>
+                  <div className="text-sm text-gray-700 text-left bg-white rounded-lg px-2 py-4">
+                    {Array.isArray(card.content) && card.content.length > 0 ? (
+                      <ul className="list-disc pl-5 space-y-2">
+                        {card.content.map((item, idx) => (
+                          <li key={idx}>{item}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-gray-500 italic">No insights available</p>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
 
-            <div className="text-xs text-gray-500 mt-1 text-center">← Swipe to explore insights →</div>
+            <div className="text-xs text-gray-500 mt-1 text-center">Scroll to explore insights</div>
 
           </div>
         ) : selectedSession ? (

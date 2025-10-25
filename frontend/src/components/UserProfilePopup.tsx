@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAuth } from '../utils/AuthContext';
-import { Calendar, LogOut } from 'lucide-react';
+import { Calendar, LogOut, X } from 'lucide-react';
 import BatchWidget from './BatchWidget';
 
 interface UserProfilePopupProps {
@@ -32,7 +32,16 @@ const UserProfilePopup: React.FC<UserProfilePopupProps> = ({ onClose }) => {
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40" onClick={handleOverlayClick}>
-      <div className="w-full max-w-sm bg-white rounded-lg p-4 shadow-lg mx-4">
+      <div className="relative w-full max-w-sm bg-white rounded-2xl p-4 shadow-lg mx-4">
+        {/* Close button (top-right) */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close profile"
+          className="absolute top-3 right-3 inline-flex items-center justify-center w-8 h-8 rounded-full text-gray-600 hover:bg-gray-100"
+        >
+          <X className="h-4 w-4" />
+        </button>
         <div className="flex items-center gap-4">
           <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center text-2xl font-bold text-gray-800">
             {user?.name ? getInitials(user.name) : 'U'}
