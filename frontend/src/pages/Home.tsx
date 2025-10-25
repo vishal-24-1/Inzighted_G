@@ -84,11 +84,6 @@ const StreakWidget: React.FC<StreakWidgetProps> = ({ onOpen }) => {
         <span className="text-lg font-bold text-gray-800">
           {streakCount}
         </span>
-
-        {/* Pulsing indicator for active streak */}
-        {isActive && (
-          <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full animate-ping" />
-        )}
       </button>
 
       {/* Modal is lifted to Home so it shares the same layer as other top-level popups */}

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useLocation } from 'react-router-dom';
 import { chatAPI } from '../utils/api';
-import './ChatBot.css';
+import { Mic, Send, LogOut } from 'lucide-react';
 
 interface Message {
   id: string;
@@ -152,98 +152,84 @@ const ChatBot: React.FC = () => {
   };
 
   return (
-    <div className="chatbot-container">
-      <header className="chatbot-header">
-        <div className="header-content">
-          <h1>InzightEd AI</h1>
-          <div className="user-info">
-            <span>Welcome, {user?.name}</span>
-            <button onClick={logout} className="logout-button">Logout</button>
+    <div className="flex flex-col h-screen bg-gray-50 font-sans">
+      <header className="bg-gradient-to-r from-indigo-500 via-purple-600 to-pink-500 text-white px-6 py-4 sticky top-0 shadow z-10">
+        <div className="max-w-6xl mx-auto flex justify-between items-center">
+          <h1 className="text-lg font-semibold">InzightEd AI</h1>
+          <div className="flex items-center gap-4 text-sm">
+            <span className="hidden sm:inline">Welcome, {user?.name}</span>
+            <button
+              onClick={logout}
+              className="inline-flex items-center gap-2 bg-white/20 border border-white/30 px-3 py-1 rounded-md text-white text-sm hover:bg-white/30"
+            >
+              <LogOut size={16} />
+              <span className="sr-only">Logout</span>
+            </button>
           </div>
         </div>
       </header>
 
-      <main className="chatbot-main">
-        <div className="messages-container">
-          <div className="messages-list">
+      <main className="flex-1 flex flex-col max-w-3xl w-full mx-auto px-4">
+        <div className="flex-1 overflow-hidden py-4">
+          <div className="flex-1 overflow-y-auto px-2 flex flex-col gap-4">
             {messages.map((message) => (
               <div
                 key={message.id}
-                className={`message ${message.isUser ? 'user-message' : 'bot-message'}`}
+                className={`flex max-w-[80%] ${message.isUser ? 'self-end' : 'self-start'}`}
               >
-                <div className="message-content">
-                  <div className="message-text">{message.text}</div>
-                  <div className="message-time">{formatTime(message.timestamp)}</div>
+                <div className={`rounded-2xl p-3 shadow ${message.isUser ? 'bg-gradient-to-r from-indigo-500 to-purple-600 text-white' : 'bg-white text-gray-800'}`}>
+                  <div className="whitespace-pre-wrap">{message.text}</div>
+                  <div className={`text-xs mt-1 ${message.isUser ? 'text-white/80' : 'text-gray-500'}`}>{formatTime(message.timestamp)}</div>
                 </div>
               </div>
             ))}
+
             {isLoading && (
-              <div className="message bot-message">
-                <div className="message-content">
-                  <div className="typing-indicator">
-                    <span></span>
-                    <span></span>
-                    <span></span>
+              <div className="flex">
+                <div className="rounded-2xl p-3 bg-white text-gray-800 shadow">
+                  <div className="flex items-center gap-2 px-2 py-1">
+                    <span className="w-2 h-2 rounded-full bg-gray-400 animate-pulse" />
+                    <span className="w-2 h-2 rounded-full bg-gray-400 animate-pulse delay-75" />
+                    <span className="w-2 h-2 rounded-full bg-gray-400 animate-pulse delay-150" />
                   </div>
                 </div>
               </div>
             )}
+
             <div ref={messagesEndRef} />
           </div>
         </div>
 
-        <div className="input-container">
-          <form onSubmit={handleSendMessage} className="input-form">
-            <div className="input-wrapper">
+        <div className="sticky bottom-0 bg-white border-t border-gray-200 p-4">
+          <form onSubmit={handleSendMessage} className="max-w-full">
+            <div className="flex items-center bg-gray-100 rounded-full p-2 border border-gray-200 focus-within:border-indigo-500">
               <input
                 ref={inputRef}
                 type="text"
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder="Type here ..."
-                className="message-input"
+                className="flex-1 bg-transparent outline-none px-4 text-base"
                 disabled={isLoading}
               />
+
               <button
                 type="button"
                 onClick={isListening ? stopListening : startListening}
-                className={`voice-button ${isListening ? 'listening' : ''}`}
+                className={`p-2 rounded-full text-gray-600 hover:bg-gray-200 ${isListening ? 'text-red-500 bg-red-50' : ''}`}
                 disabled={isLoading}
+                aria-pressed={isListening}
+                title={isListening ? 'Stop listening' : 'Start voice input'}
               >
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M12 14C13.66 14 15 12.66 15 11V5C15 3.34 13.66 2 12 2C10.34 2 9 3.34 9 5V11C9 12.66 10.34 14 12 14Z"
-                    fill="currentColor"
-                  />
-                  <path
-                    d="M17 11C17 14.53 14.39 17.44 11 17.93V21H13C13.55 21 14 21.45 14 22C14 22.55 13.55 23 13 23H11C10.45 23 10 22.55 10 22C10 21.45 10.45 21 11 21H13V17.93C9.61 17.44 7 14.53 7 11H5C5 15.49 8.23 19.16 12.44 19.88C12.78 19.95 13.22 19.95 13.56 19.88C17.77 19.16 21 15.49 21 11H19C19 11 17 11 17 11Z"
-                    fill="currentColor"
-                  />
-                </svg>
+                <Mic size={18} />
               </button>
+
               <button
                 type="submit"
-                className="send-button"
+                className="ml-2 p-2 rounded-full text-indigo-600 hover:bg-indigo-50 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={isLoading || !inputText.trim()}
               >
-                <svg
-                  width="24"
-                  height="24"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  xmlns="http://www.w3.org/2000/svg"
-                >
-                  <path
-                    d="M2.01 21L23 12L2.01 3L2 10L17 12L2 14L2.01 21Z"
-                    fill="currentColor"
-                  />
-                </svg>
+                <Send size={18} />
               </button>
             </div>
           </form>

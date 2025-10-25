@@ -34,6 +34,8 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   const [sessionFinished, setSessionFinished] = useState(false);
   const [isEndingSession, setIsEndingSession] = useState(false);
   const [showFeedback, setShowFeedback] = useState(false);
+  const [pasteBlocked, setPasteBlocked] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
 
   const [sessionDocument, setSessionDocument] = useState<string | null>(null);
   const [sessionCreatedAt, setSessionCreatedAt] = useState<Date | null>(null);
@@ -45,6 +47,22 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   const initialInputHeight = 44; // px - used to reset after send
 
   useEffect(() => {
+    // Set CSS variable --vh to handle mobile browser toolbar + keyboard resizing.
+    const setVh = () => {
+      try {
+        document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+      } catch (e) {
+        // ignore
+      }
+    };
+    setVh();
+    window.addEventListener('resize', setVh);
+    window.addEventListener('orientationchange', setVh);
+
+    // detect mobile user agents to avoid auto-focusing which opens virtual keyboard
+    const ua = navigator.userAgent || navigator.vendor || (window as any).opera;
+    const mobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(ua);
+    setIsMobile(Boolean(mobile));
     // Initialize speech recognition
     if ((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition) {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -98,32 +116,38 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
     if (sessionId) {
       loadSessionMessages();
     }
-    
-    // Cleanup timer on unmount
+
+    // Cleanup timer and listeners on unmount
     return () => {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
       }
+      try {
+        window.removeEventListener('resize', setVh);
+        window.removeEventListener('orientationchange', setVh);
+      } catch (e) {
+        // ignore
+      }
     };
   }, [sessionId, searchParams]);
-  
+
   // Timer effect - start countdown after session data is loaded
   useEffect(() => {
     if (!sessionCreatedAt || sessionFinished || !sessionId) return;
-    
+
     // Clear any existing timer
     if (timerIntervalRef.current) {
       clearInterval(timerIntervalRef.current);
     }
-    
+
     // Calculate initial remaining time
     const updateRemainingTime = () => {
       const now = new Date();
       const elapsed = Math.floor((now.getTime() - sessionCreatedAt.getTime()) / 1000);
       const remaining = Math.max(0, (timeoutMins * 60) - elapsed);
-      
+
       setRemainingSeconds(remaining);
-      
+
       // Auto-end session when timer reaches 0
       if (remaining === 0 && !isEndingSession) {
         console.log('Session timeout reached, auto-ending session');
@@ -133,13 +157,13 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
         handleEndSession();
       }
     };
-    
+
     // Initial calculation
     updateRemainingTime();
-    
+
     // Update every second
     timerIntervalRef.current = setInterval(updateRemainingTime, 1000);
-    
+
     return () => {
       if (timerIntervalRef.current) {
         clearInterval(timerIntervalRef.current);
@@ -158,16 +182,22 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
     if (!sessionId || isLoading || sessionFinished) return;
 
     // Slight delay ensures the input is mounted and visible (helps with some browsers)
-    const t = setTimeout(() => {
-      try {
-        inputRef.current?.focus();
-      } catch (e) {
-        // ignore focus errors
-      }
-    }, 50);
+    // Avoid auto-focusing on mobile to prevent the virtual keyboard from opening automatically.
+    let t: any = null;
+    if (!isMobile) {
+      t = setTimeout(() => {
+        try {
+          inputRef.current?.focus();
+        } catch (e) {
+          // ignore focus errors
+        }
+      }, 50);
+    }
 
-    return () => clearTimeout(t);
-  }, [sessionId, isLoading, sessionFinished]);
+    return () => {
+      if (t) clearTimeout(t);
+    };
+  }, [sessionId, isLoading, sessionFinished, isMobile]);
 
   const loadSessionMessages = async () => {
     if (!sessionId) return;
@@ -190,17 +220,17 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       if (sessionData.document) {
         setSessionDocument(sessionData.document.filename);
       }
-      
+
       // Set session created time for timer
       if (sessionData.created_at) {
         setSessionCreatedAt(new Date(sessionData.created_at));
       }
-      
+
       // Set timeout configuration from server
       if (sessionData.timeout_mins) {
         setTimeoutMins(sessionData.timeout_mins);
       }
-      
+
       // Check if session is already expired
       if (sessionData.session_expired || !sessionData.is_active) {
         console.log('Session already expired or inactive');
@@ -225,8 +255,8 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
     }
   };
 
-  const handleSubmitAnswer = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSubmitAnswer = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
 
     if (!inputText.trim() || isLoading || sessionFinished || !sessionId) return;
 
@@ -244,7 +274,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       if (inputRef.current) {
         inputRef.current.style.height = initialInputHeight + 'px';
       }
-    } catch (e) {}
+    } catch (e) { }
     setIsLoading(true);
 
     try {
@@ -318,6 +348,34 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
     }
   };
 
+  // Handle key events inside the textarea: Enter = send, Shift+Enter = newline
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      // Only submit if we have non-empty content
+      if (!isLoading && inputText.trim() && !sessionFinished) {
+        // call submit without synthetic event
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        handleSubmitAnswer();
+      }
+    }
+  };
+
+  const handlePasteBlock = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // prevent pasting into the answer input
+    e.preventDefault();
+    setPasteBlocked(true);
+    // hide the message after 2s
+    setTimeout(() => setPasteBlocked(false), 2000);
+  };
+
+  const handleDropBlock = (e: React.DragEvent<HTMLTextAreaElement>) => {
+    // also prevent dropping text/files into textarea
+    e.preventDefault();
+    setPasteBlocked(true);
+    setTimeout(() => setPasteBlocked(false), 2000);
+  };
+
   const handleEndSession = async () => {
     if (!sessionId) return;
     // prevent multiple clicks
@@ -326,7 +384,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
 
     try {
       await tutoringAPI.endSession(sessionId);
-      
+
       // Show feedback form instead of navigating immediately
       setShowFeedback(true);
       setIsEndingSession(false);
@@ -355,14 +413,14 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       navigate(`/boost?session=${sessionId}`);
     }
   };
-  
+
   // Format remaining time as MM:SS
   const formatRemainingTime = (seconds: number): string => {
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
     return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
   };
-  
+
   // Determine timer color based on remaining time
   const getTimerColor = (): string => {
     if (remainingSeconds <= 60) return 'text-red-600'; // Last minute - red
@@ -416,163 +474,173 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       {/* Outer full-width background so mobile remains unchanged but desktop can center a wider container */}
       <div className="min-h-screen bg-gray-50 font-sans w-full">
         <div className="max-w-sm md:max-w-full mx-auto shadow-xl flex flex-col min-h-screen">
-        <header className="bg-white border-b text-gray-900 p-4 sticky top-0 z-20">
-          <div className="flex justify-between items-center gap-3">
-            <h1 className="text-lg font-semibold m-0 truncate max-w-[8rem] md:max-w-xl">{sessionDocument || 'AI Tutor'}</h1>
-            
-            {/* Countdown Timer */}
-            <div 
-              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 border ${
-                remainingSeconds <= 60 ? 'border-red-300 bg-red-50' : 
-                remainingSeconds <= 180 ? 'border-orange-300 bg-orange-50' : 
-                'border-gray-200'
-              }`}
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              <svg 
-                className={`h-4 w-4 ${getTimerColor()}`} 
-                fill="none" 
-                viewBox="0 0 24 24" 
-                stroke="currentColor"
-              >
-                <path 
-                  strokeLinecap="round" 
-                  strokeLinejoin="round" 
-                  strokeWidth={2} 
-                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" 
-                />
-              </svg>
-              <span 
-                className={`text-sm font-mono font-semibold ${getTimerColor()}`}
-                title="Session will automatically end when timer reaches 0"
-              >
-                {formatRemainingTime(remainingSeconds)}
-              </span>
-            </div>
-            
-            <button
-              onClick={handleEndSession}
-              className="bg-red-100 text-red-600 font-semibold border border-red-600 rounded-xl px-3 py-1.5 text-sm cursor-pointer transition-all duration-300 hover:bg-red-300 hover:-translate-y-0.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
-              disabled={isEndingSession}
-            >
-              {isEndingSession ? (
-                <span className="inline-flex items-center gap-2">
-                  <svg className="animate-spin h-4 w-4 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                  </svg>
-                  Ending...
-                </span>
-              ) : (
-                'End Session'
-              )}
-            </button>
-          </div>
-        </header>
+          <header className="bg-white border-b text-gray-900 p-4 sticky top-0 z-20">
+            <div className="flex justify-between items-center gap-3">
+              <h1 className="text-lg font-semibold m-0 truncate max-w-[8rem] md:max-w-xl">{sessionDocument || 'AI Tutor'}</h1>
 
-        <main className="flex-1 flex flex-col h-[calc(100vh-80px)]">
-          <div className="flex-1 overflow-y-auto p-4">
-            <div className="flex flex-col gap-4">
-              {messages.map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex w-full ${message.isUser ? 'justify-end' : 'justify-start'}`}
+              {/* Countdown Timer */}
+              <div
+                className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 border ${remainingSeconds <= 60 ? 'border-red-300 bg-red-50' :
+                  remainingSeconds <= 180 ? 'border-orange-300 bg-orange-50' :
+                    'border-gray-200'
+                  }`}
+                aria-live="polite"
+                aria-atomic="true"
+              >
+                <svg
+                  className={`h-4 w-4 ${getTimerColor()}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
                 >
-                  {/* On mobile keep 80% width; on desktop reduce to ~60% for better visuals */}
-                  <div className={`max-w-[80%] md:max-w-[60%]`}>
-                    <div className={`bg-white rounded-2xl py-2 px-3 shadow-md relative hover:shadow-lg transition-shadow duration-200 ${message.isUser ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white' : 'bg-white text-gray-800'}`}>
-                      <div className="text-sm leading-relaxed text-left">{message.text}</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="flex w-full justify-start">
-                  <div className="max-w-[80%] md:max-w-[60%]">
-                    <div className="bg-white rounded-2xl py-2 px-3 shadow-md">
-                      <div className="flex gap-1 p-2">
-                        <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce"></span>
-                        <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '0.1s' }}></span>
-                        <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '0.2s' }}></span>
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+                <span
+                  className={`text-sm font-mono font-semibold ${getTimerColor()}`}
+                  title="Session will automatically end when timer reaches 0"
+                >
+                  {formatRemainingTime(remainingSeconds)}
+                </span>
+              </div>
+
+              <button
+                onClick={handleEndSession}
+                className="bg-red-100 text-red-600 font-semibold border border-red-600 rounded-xl px-3 py-1.5 text-sm cursor-pointer transition-all duration-300 hover:bg-red-300 hover:-translate-y-0.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
+                disabled={isEndingSession}
+              >
+                {isEndingSession ? (
+                  <span className="inline-flex items-center gap-2">
+                    <svg className="animate-spin h-4 w-4 text-red-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                    </svg>
+                    Ending...
+                  </span>
+                ) : (
+                  'End Session'
+                )}
+              </button>
+            </div>
+          </header>
+
+          <main className="flex-1 flex flex-col" style={{ height: 'calc(var(--vh, 1vh) * 100 - 80px)' }}>
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="flex flex-col gap-4">
+                {messages.map((message) => (
+                  <div
+                    key={message.id}
+                    className={`flex w-full ${message.isUser ? 'justify-end' : 'justify-start'}`}
+                  >
+                    {/* On mobile keep 80% width; on desktop reduce to ~60% for better visuals */}
+                    <div className={`max-w-[80%] md:max-w-[60%]`}>
+                      <div className={`bg-white rounded-2xl py-2 px-3 shadow-md relative hover:shadow-lg transition-shadow duration-200 ${message.isUser ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white' : 'bg-white text-gray-800'}`}>
+                        <div className="text-sm leading-relaxed text-left">{message.text}</div>
                       </div>
                     </div>
                   </div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
-            </div>
-          </div>
-
-          {!sessionFinished && (
-            <div className="bg-white border-t border-gray-200 p-4 sticky bottom-0">
-              <form onSubmit={handleSubmitAnswer} className="w-full">
-                <div className="flex items-center gap-2">
-                  <div className="flex-1 bg-gray-50 rounded-xl border-2 border-gray-200 focus-within:border-blue-500 transition-colors duration-300 flex items-center">
-                    <textarea
-                      ref={inputRef}
-                      value={inputText}
-                      onChange={(e) => {
-                        setInputText(e.target.value);
-                        // Auto-resize textarea
-                        const el = e.target as HTMLTextAreaElement;
-                        el.style.height = 'auto';
-                        el.style.height = Math.min(el.scrollHeight, 240) + 'px';
-                      }}
-                      placeholder="Type your answer here..."
-                      className="flex-1 resize-none border-none bg-transparent px-3 py-2 text-base outline-none placeholder-gray-400 max-h-60"
-                      disabled={isLoading || sessionFinished}
-                      rows={1}
-                    />
+                ))}
+                {isLoading && (
+                  <div className="flex w-full justify-start">
+                    <div className="max-w-[80%] md:max-w-[60%]">
+                      <div className="bg-white rounded-2xl py-2 px-3 shadow-md">
+                        <div className="flex gap-1 p-2">
+                          <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce"></span>
+                          <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '0.1s' }}></span>
+                          <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '0.2s' }}></span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={isListening ? stopListening : startListening}
-                    className={`w-11 h-11 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300 ${isListening ? 'bg-red-500 animate-pulse' : 'bg-gray-200 hover:bg-gray-300 hover:scale-105'} disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none`}
-                    disabled={isLoading || sessionFinished}
-                  >
-                    <Mic size={19} />
-                  </button>
-                  <button
-                    type="submit"
-                    className="w-11 h-11 rounded-full bg-blue-500 text-white flex items-center justify-center cursor-pointer transition-all duration-300 hover:bg-blue-600 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-                    disabled={isLoading || !inputText.trim() || sessionFinished}
-                  >
-                    <Send size={19} style={{ marginLeft: '-4px' }} />
-                  </button>
-                </div>
-              </form>
-            </div>
-          )}
-
-          {sessionFinished && (
-            <div className="bg-white border-t border-gray-200 p-8 text-center">
-              <div>
-                <h3 className="text-green-500 m-0 mb-2 text-xl font-semibold">Session Complete!</h3>
-                <p className="text-gray-600 m-0 mb-6 leading-relaxed">Great job! You've finished this tutoring session.</p>
-                <button
-                  onClick={handleEndSession}
-                  className="bg-gradient-to-br from-blue-500 to-blue-600 text-white border-none rounded-full px-8 py-4 font-semibold text-base cursor-pointer transition-all duration-300 shadow-lg shadow-blue-500/40 hover:-translate-y-1 hover:shadow-blue-500/60 disabled:opacity-60 disabled:cursor-not-allowed"
-                  disabled={isEndingSession}
-                >
-                  {isEndingSession ? (
-                    <span className="inline-flex items-center gap-2">
-                      <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                      </svg>
-                      Ending...
-                    </span>
-                  ) : (
-                    'Return Home'
-                  )}
-                </button>
+                )}
+                <div ref={messagesEndRef} />
               </div>
             </div>
-          )}
-        </main>
+
+            {!sessionFinished && (
+              <div className={`bg-white border-t border-gray-200 p-4 ${isMobile ? 'fixed left-0 right-0 bottom-0 z-40' : 'sticky bottom-0'}`} style={isMobile ? { WebkitBackdropFilter: 'blur(6px)', backdropFilter: 'blur(6px)' } : undefined}>
+                <div className="max-w-sm md:max-w-full mx-auto">
+                  <form onSubmit={handleSubmitAnswer} className="w-full">
+                    <div className="flex items-end gap-2">
+                      <div className="flex-1 bg-gray-50 rounded-xl border-2 border-gray-200 focus-within:border-blue-500 transition-colors duration-300 flex items-end">
+                        <textarea
+                          ref={inputRef}
+                          value={inputText}
+                          onChange={(e) => {
+                            setInputText(e.target.value);
+                            // Auto-resize textarea
+                            const el = e.target as HTMLTextAreaElement;
+                            el.style.height = 'auto';
+                            el.style.height = Math.min(el.scrollHeight, 240) + 'px';
+                          }}
+                          onKeyDown={handleInputKeyDown}
+                          onPaste={handlePasteBlock}
+                          onDrop={handleDropBlock}
+                          placeholder="Type your answer here"
+                          aria-label="Type your answer"
+                          className="flex-1 resize-none border-none bg-transparent px-3 py-2 text-base outline-none placeholder-gray-400"
+                          disabled={isLoading || sessionFinished}
+                          rows={1}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={isListening ? stopListening : startListening}
+                        title={isListening ? 'Stop listening' : 'Start speech input'}
+                        className={`w-11 h-11 rounded-full flex items-center justify-center cursor-pointer transition-all duration-300 ${isListening ? 'bg-red-500 animate-pulse' : 'bg-gray-200 hover:bg-gray-300 hover:scale-105'} disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none self-end`}
+                        disabled={isLoading || sessionFinished}
+                      >
+                        <Mic size={19} />
+                      </button>
+                      <button
+                        type="submit"
+                        title="Send answer (Enter)"
+                        className="w-11 h-11 rounded-full bg-blue-500 text-white flex items-center justify-center cursor-pointer transition-all duration-300 hover:bg-blue-600 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none self-end"
+                        disabled={isLoading || !inputText.trim() || sessionFinished}
+                      >
+                        <Send size={19} style={{ marginLeft: '-4px' }} />
+                      </button>
+                    </div>
+                    {pasteBlocked && (
+                      <div className="mt-2 text-sm text-red-600">Pasting is disabled — please type your answer.</div>
+                    )}
+                  </form>
+                </div>
+              </div>
+            )}
+
+            {sessionFinished && (
+              <div className="bg-white border-t border-gray-200 p-8 text-center">
+                <div>
+                  <h3 className="text-green-500 m-0 mb-2 text-xl font-semibold">Session Complete!</h3>
+                  <p className="text-gray-600 m-0 mb-6 leading-relaxed">Great job! You've finished this tutoring session.</p>
+                  <button
+                    onClick={handleEndSession}
+                    className="bg-gradient-to-br from-blue-500 to-blue-600 text-white border-none rounded-full px-8 py-4 font-semibold text-base cursor-pointer transition-all duration-300 shadow-lg shadow-blue-500/40 hover:-translate-y-1 hover:shadow-blue-500/60 disabled:opacity-60 disabled:cursor-not-allowed"
+                    disabled={isEndingSession}
+                  >
+                    {isEndingSession ? (
+                      <span className="inline-flex items-center gap-2">
+                        <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                        </svg>
+                        Ending...
+                      </span>
+                    ) : (
+                      'Return Home'
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </main>
+        </div>
       </div>
-    </div>
     </>
   );
 };
