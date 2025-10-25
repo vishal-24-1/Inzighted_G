@@ -48,11 +48,6 @@ const SessionFeedback: React.FC<SessionFeedbackProps> = ({ sessionId, onComplete
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!improve.trim()) {
-      alert('Please let us know what we should improve, or click Skip.');
-      return;
-    }
-
     setIsSubmitting(true);
 
     try {
@@ -60,7 +55,8 @@ const SessionFeedback: React.FC<SessionFeedbackProps> = ({ sessionId, onComplete
         rating,
         liked: liked.trim(),
         improve: improve.trim(),
-        skipped: false,
+        // If improve is empty, mark as skipped so backend validation passes
+        skipped: !improve.trim(),
       });
       
       onComplete();
@@ -205,10 +201,10 @@ const SessionFeedback: React.FC<SessionFeedbackProps> = ({ sessionId, onComplete
             />
           </div>
 
-          {/* What to Improve - Required */}
+          {/* What to Improve - Optional */}
           <div>
             <label htmlFor="improve" className="block text-sm font-semibold text-gray-700 mb-2">
-              What's one thing we should improve? <span className="text-red-500">*</span>
+              What's one thing we should improve? <span className="text-gray-400 font-normal">(Optional)</span>
             </label>
             <textarea
               id="improve"
@@ -218,7 +214,6 @@ const SessionFeedback: React.FC<SessionFeedbackProps> = ({ sessionId, onComplete
               className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:outline-none transition-colors resize-none"
               rows={3}
               maxLength={500}
-              required
             />
             <div className="text-xs text-gray-400 mt-1 text-right">
               {improve.length}/500
@@ -237,7 +232,7 @@ const SessionFeedback: React.FC<SessionFeedbackProps> = ({ sessionId, onComplete
             </button>
             <button
               type="submit"
-              disabled={isSubmitting || !improve.trim()}
+              disabled={isSubmitting}
               className="flex-1 px-6 py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-lg hover:shadow-xl"
             >
               {isSubmitting ? (

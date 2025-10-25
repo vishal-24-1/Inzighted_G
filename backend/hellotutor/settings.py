@@ -230,6 +230,10 @@ CELERY_RESULT_EXPIRES = 3600  # 1 hour
 CELERY_TASK_SOFT_TIME_LIMIT = 1800  # 30 minutes
 CELERY_TASK_TIME_LIMIT = 2400  # 40 minutes
 
+# Session Timeout Configuration
+# Tutoring sessions automatically end after this duration (in minutes)
+SESSION_TIMEOUT_MINS = int(os.environ.get("SESSION_TIMEOUT_MINS", "15"))
+
 # REST Framework Configuration
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (

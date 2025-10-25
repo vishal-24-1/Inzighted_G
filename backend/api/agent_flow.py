@@ -8,7 +8,6 @@ from .gemini_client import gemini_client
 from .rag_ingestion import initialize_pinecone, get_embedding_client
 from .auth import get_tenant_tag
 from .tanglish_prompts import strip_gamification_prefix
-from .message_validation import categorize_invalid_message, get_corrective_message
 import logging
 import sentry_sdk
 import uuid
@@ -353,37 +352,6 @@ class TutorAgent:
             
             # User asked another follow-up question - answer it and append proceed prompt inline
             print(f"[AGENT] User asked follow-up question, will answer and append proceed prompt inline")
-            # Before answering follow-up content, validate the message to ensure it's not
-            # emoji/gibberish/irrelevant. If invalid, return corrective reply instead of
-            # calling RAG. This enforces validation-first ordering.
-            try:
-                invalid_category = categorize_invalid_message(
-                    user_message,
-                    current_question_item.question_text,
-                    current_question_item.expected_answer
-                )
-            except Exception as e:
-                # If validation unexpectedly fails, log and proceed to answering so we
-                # don't block the user flow. Validation errors should be rare.
-                logger.error(f"[AGENT] Message validation failed in proceed-branch: {e}")
-                invalid_category = None
-
-            if invalid_category:
-                # Return corrective message and do not call RAG
-                corrective_reply = get_corrective_message(
-                    invalid_category,
-                    current_question_item.question_text,
-                    self.language,
-                    user_message=user_message
-                )
-                logger.info(f"[AGENT] Rejecting invalid follow-up message (category={invalid_category}): '{user_message[:50]}'")
-                return {
-                    "reply": corrective_reply,
-                    "next_question": None,
-                    "session_complete": False,
-                    "evaluation": None
-                }
-
             try:
                 clarification_reply = self._answer_user_question_with_rag(user_message, current_question_item)
             except Exception as e:
@@ -398,41 +366,39 @@ class TutorAgent:
                 "evaluation": None
             }
         
-        # § 1.3.5 — MESSAGE VALIDATION: Check if message is valid before processing
-        # Validate for emoji-only, gibberish, or irrelevant answers
-        print(f"[AGENT] Validating user message...")
-        invalid_category = categorize_invalid_message(
+        # § 1.4 — Classify intent using Gemini with user's language preference
+        print(f"[AGENT] Calling intent classifier with question context...")
+        current_question_text = current_question_item.question_text if current_question_item else None
+        classifier_result = gemini_client.classify_intent(
             user_message, 
-            current_question_item.question_text,
-            current_question_item.expected_answer
+            current_question=current_question_text,
+            language=self.language
         )
+        print(f"[AGENT] ✅ Classifier result: {classifier_result}\n")
         
-        if invalid_category:
-            # Message is invalid - return corrective message and re-ask question
-            print(f"[AGENT] ⚠️ Invalid message detected: category={invalid_category}")
-            corrective_reply = get_corrective_message(
-                invalid_category,
-                current_question_item.question_text,
-                self.language
+        # § 1.4.1 — Check if message is invalid (gibberish/meaningless)
+        if not classifier_result.get("valid", True):
+            # Message is invalid - return helpful message to user without saving token
+            invalid_message = classifier_result.get("message", "The message you sent is not valid. Please provide a valid answer or reply.")
+            print(f"[AGENT] ⚠️ Invalid message detected, returning validation error\n")
+            
+            # Store a bot message with the validation error
+            ChatMessage.objects.create(
+                session=self.session,
+                user=self.user,
+                content=invalid_message,
+                is_user_message=False
             )
             
-            logger.info(f"[AGENT] Rejecting invalid message (category={invalid_category}): '{user_message[:50]}'")
-            
-            # DO NOT evaluate, DO NOT advance question
-            # Return corrective message - same question remains current
             return {
-                "reply": corrective_reply,
+                "reply": invalid_message,
                 "next_question": None,
                 "session_complete": False,
                 "evaluation": None
             }
         
-        print(f"[AGENT] ✅ Message validation passed")
-        
-        # § 1.4 — Classify intent using Gemini with user's language preference
-        print(f"[AGENT] Calling intent classifier...")
-        classifier_token = gemini_client.classify_intent(user_message, language=self.language)
-        print(f"[AGENT] ✅ Intent classified as: {classifier_token}\n")
+        # Extract token from valid result
+        classifier_token = classifier_result.get("token")
         
         # Update message with classifier token
         user_msg_record.classifier_token = classifier_token

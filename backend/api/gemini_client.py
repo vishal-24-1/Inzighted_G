@@ -436,49 +436,136 @@ class GeminiLLMClient:
     # NEW METHODS FOR TANGLISH AGENT FLOW
     # ============================================================
     
-    def classify_intent(self, user_message: str, language: str = "tanglish") -> str:
+    def classify_intent(self, user_message: str, current_question: str = None, language: str = "tanglish") -> dict:
         """
-        Classify user intent using Gemini with exact system prompt from spec.
-        Returns one token: DIRECT_ANSWER, MIXED, or RETURN_QUESTION.
+        Classify user intent using Gemini with validation and context.
+        First validates if the user message is meaningful (not gibberish).
+        If valid, classifies intent as: DIRECT_ANSWER, MIXED, or RETURN_QUESTION.
         Falls back to deterministic rule on API failure.
         
         Args:
             user_message: The user's message to classify
+            current_question: The current question asked by the bot (optional)
+            language: Preferred language for classification
             
         Returns:
-            Intent token string
+            Dict with structure:
+            - If valid: {"valid": True, "token": "DIRECT_ANSWER"|"MIXED"|"RETURN_QUESTION"}
+            - If invalid: {"valid": False, "message": "Error message for user"}
         """
         from .tanglish_prompts import get_intent_classifier_system_prompt, fallback_intent_classifier
+        import json
 
         try:
-            # Build prompt using the dynamic intent classifier system prompt
+            # Build enhanced prompt with validation + classification instructions
             system_prompt = get_intent_classifier_system_prompt(language)
-            prompt = f"{system_prompt}\n\nUSER_MESSAGE: {user_message}\n\nClassify:"
             
-            print(f"[CLASSIFIER] Prompt: {prompt[:200]}...")
+            # Add validation and JSON output instructions
+            validation_instructions = f"""
+ENHANCED CLASSIFICATION WITH VALIDATION:
+
+You will receive two inputs:
+1. CURRENT_QUESTION: The question the chatbot asked the user
+2. USER_MESSAGE: The user's response
+
+STEP 1 - VALIDATION:
+First, determine if USER_MESSAGE is meaningful and relevant to CURRENT_QUESTION:
+- **Invalid (gibberish)**: Keyboard mashing (asdasd, qweqwe), random punctuation (!!!???), empty/whitespace only
+- **Invalid (irrelevant)**: Response has NOTHING to do with the question topic. Examples:
+  * Question about technical/academic topic → "I love you", "How are you?", "Good morning"
+  * Question about grinding machines → "I like pizza", "Weather is nice", random personal chat
+  * The response must attempt to address the question or ask a related clarification
+- **Valid**: Real words that attempt to answer, ask clarification, or engage with question topic
+  * Technical answers (even if wrong/partial)
+  * "I don't know", "Can you explain?", "What is X?" (related to question)
+  * Short contextual replies: "yes", "no", "ok" (only if they make sense as answers to the question)
+
+STEP 2 - CLASSIFICATION (only if valid):
+If valid, classify intent using the original rules:
+1) If USER_MESSAGE clearly asks a question → RETURN_QUESTION
+2) If USER_MESSAGE provides an explicit answer → DIRECT_ANSWER  
+3) If both answer AND question → MIXED
+
+OUTPUT FORMAT (JSON only, no explanation):
+If invalid: {{"valid": false, "message": "The message you sent is not valid. Please provide a valid answer or reply."}}
+If valid: {{"valid": true, "token": "DIRECT_ANSWER"|"MIXED"|"RETURN_QUESTION"}}
+
+Handle {language} or English input.
+"""
+
+            # Build full prompt
+            question_context = f"CURRENT_QUESTION: {current_question}" if current_question else "CURRENT_QUESTION: [No question context available]"
+            prompt = f"{system_prompt}\n\n{validation_instructions}\n\n{question_context}\n\nUSER_MESSAGE: {user_message}\n\nClassify (return JSON only):"
             
-            # Call Gemini with short response
-            response = self.generate_response(prompt, max_tokens=10)
+            print(f"[CLASSIFIER] Enhanced prompt built (with question context)")
+            print(f"[CLASSIFIER] Current question: {current_question[:80] if current_question else 'None'}...")
+            print(f"[CLASSIFIER] User message: {user_message[:80]}...")
+            
+            # Call Gemini with moderate token limit for JSON response
+            response = self.generate_response(prompt, max_tokens=100)
             
             print(f"[CLASSIFIER] Gemini raw response: '{response}'")
             
             if not response or response.startswith("Error:"):
                 print(f"[CLASSIFIER] Gemini failed, using fallback")
-                return fallback_intent_classifier(user_message)
+                fallback_token = fallback_intent_classifier(user_message)
+                return {"valid": True, "token": fallback_token}
             
-            # Parse first token
-            token = response.strip().split()[0].upper()
+            # Parse JSON response
+            try:
+                # Clean response - strip markdown fences
+                cleaned = response.strip()
+                if cleaned.startswith('```json'):
+                    cleaned = cleaned[7:]
+                if cleaned.startswith('```'):
+                    cleaned = cleaned[3:]
+                if cleaned.endswith('```'):
+                    cleaned = cleaned[:-3]
+                cleaned = cleaned.strip()
+                
+                # Parse JSON
+                result = json.loads(cleaned)
+                
+                print(f"[CLASSIFIER] Parsed JSON: {result}")
+                
+                # Validate structure
+                if "valid" in result:
+                    if result["valid"] is False:
+                        # Invalid message detected
+                        message = result.get("message", "The message you sent is not valid. Please provide a valid answer or reply.")
+                        print(f"[CLASSIFIER] ✅ Invalid message detected")
+                        return {"valid": False, "message": message}
+                    elif result["valid"] is True and "token" in result:
+                        # Valid message with token
+                        token = result["token"].upper()
+                        valid_tokens = ['DIRECT_ANSWER', 'MIXED', 'RETURN_QUESTION']
+                        if token in valid_tokens:
+                            print(f"[CLASSIFIER] ✅ Valid message with token: {token}")
+                            return {"valid": True, "token": token}
+                
+                # JSON parsed but structure unexpected - try to extract token
+                print(f"[CLASSIFIER] ⚠️ Unexpected JSON structure, attempting token extraction")
+                
+            except json.JSONDecodeError as e:
+                print(f"[CLASSIFIER] ⚠️ JSON parse failed: {e}, attempting text parsing")
             
-            print(f"[CLASSIFIER] Parsed token: '{token}'")
+            # Fallback: Try to find valid token in response text
+            response_upper = response.upper()
+            for valid_token in ['DIRECT_ANSWER', 'MIXED', 'RETURN_QUESTION']:
+                if valid_token in response_upper:
+                    print(f"[CLASSIFIER] Found token in text: {valid_token}")
+                    return {"valid": True, "token": valid_token}
             
-            # Validate token
-            valid_tokens = ['DIRECT_ANSWER', 'MIXED', 'RETURN_QUESTION']
-            if token in valid_tokens:
-                print(f"[CLASSIFIER] ✅ Valid token: {token}")
-                return token
-            else:
-                print(f"[CLASSIFIER] ⚠️ Invalid token '{token}', using fallback")
-                return fallback_intent_classifier(user_message)
+            # Check if response indicates invalid
+            invalid_indicators = ['invalid', 'not valid', 'gibberish', 'meaningless', 'not meaningful']
+            if any(indicator in response.lower() for indicator in invalid_indicators):
+                print(f"[CLASSIFIER] Response indicates invalid message")
+                return {"valid": False, "message": "The message you sent is not valid. Please provide a valid answer or reply."}
+            
+            # Ultimate fallback: use deterministic classifier
+            print(f"[CLASSIFIER] Using deterministic fallback")
+            fallback_token = fallback_intent_classifier(user_message)
+            return {"valid": True, "token": fallback_token}
                 
         except Exception as e:
             logger.error(f"Error in classify_intent: {e}")
@@ -486,7 +573,9 @@ class GeminiLLMClient:
                 "component": "gemini_client",
                 "method": "classify_intent"
             })
-            return fallback_intent_classifier(user_message)
+            # On exception, use fallback and assume valid
+            fallback_token = fallback_intent_classifier(user_message)
+            return {"valid": True, "token": fallback_token}
     
     def generate_questions_structured(self, context: str, total_questions: int = 10, language: str = "tanglish") -> list:
         """

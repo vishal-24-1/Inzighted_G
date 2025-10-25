@@ -36,8 +36,12 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
   const [showFeedback, setShowFeedback] = useState(false);
 
   const [sessionDocument, setSessionDocument] = useState<string | null>(null);
+  const [sessionCreatedAt, setSessionCreatedAt] = useState<Date | null>(null);
+  const [remainingSeconds, setRemainingSeconds] = useState<number>(900); // 15 minutes = 900 seconds
+  const [timeoutMins, setTimeoutMins] = useState<number>(15);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const initialInputHeight = 44; // px - used to reset after send
 
   useEffect(() => {
@@ -94,7 +98,54 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
     if (sessionId) {
       loadSessionMessages();
     }
+    
+    // Cleanup timer on unmount
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    };
   }, [sessionId, searchParams]);
+  
+  // Timer effect - start countdown after session data is loaded
+  useEffect(() => {
+    if (!sessionCreatedAt || sessionFinished || !sessionId) return;
+    
+    // Clear any existing timer
+    if (timerIntervalRef.current) {
+      clearInterval(timerIntervalRef.current);
+    }
+    
+    // Calculate initial remaining time
+    const updateRemainingTime = () => {
+      const now = new Date();
+      const elapsed = Math.floor((now.getTime() - sessionCreatedAt.getTime()) / 1000);
+      const remaining = Math.max(0, (timeoutMins * 60) - elapsed);
+      
+      setRemainingSeconds(remaining);
+      
+      // Auto-end session when timer reaches 0
+      if (remaining === 0 && !isEndingSession) {
+        console.log('Session timeout reached, auto-ending session');
+        if (timerIntervalRef.current) {
+          clearInterval(timerIntervalRef.current);
+        }
+        handleEndSession();
+      }
+    };
+    
+    // Initial calculation
+    updateRemainingTime();
+    
+    // Update every second
+    timerIntervalRef.current = setInterval(updateRemainingTime, 1000);
+    
+    return () => {
+      if (timerIntervalRef.current) {
+        clearInterval(timerIntervalRef.current);
+      }
+    };
+  }, [sessionCreatedAt, sessionFinished, timeoutMins, isEndingSession, sessionId]);
 
   useEffect(() => {
     // Auto-scroll to bottom when new messages are added
@@ -139,12 +190,37 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       if (sessionData.document) {
         setSessionDocument(sessionData.document.filename);
       }
+      
+      // Set session created time for timer
+      if (sessionData.created_at) {
+        setSessionCreatedAt(new Date(sessionData.created_at));
+      }
+      
+      // Set timeout configuration from server
+      if (sessionData.timeout_mins) {
+        setTimeoutMins(sessionData.timeout_mins);
+      }
+      
+      // Check if session is already expired
+      if (sessionData.session_expired || !sessionData.is_active) {
+        console.log('Session already expired or inactive');
+        setSessionFinished(true);
+        // Auto-trigger end flow
+        if (!isEndingSession) {
+          handleEndSession();
+        }
+      }
     } catch (error: any) {
       console.error('Failed to load session messages:', error);
       if (error.response?.status === 404) {
         alert('Tutoring session not found.');
         if (onEndSession) onEndSession();
         else navigate('/boost');
+      } else if (error.response?.status === 410) {
+        // Session expired on server
+        console.log('Session expired (410 response)');
+        setSessionFinished(true);
+        setShowFeedback(true);
       }
     }
   };
@@ -214,14 +290,29 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
         }
       }
     } catch (error: any) {
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        text: 'Sorry, I encountered an error. Please try again.',
-        isUser: false,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, errorMessage]);
-      console.error('Tutoring error:', error);
+      // Check if session has expired (410 Gone)
+      if (error.response?.status === 410) {
+        console.log('Session expired during answer submission');
+        setSessionFinished(true);
+        const expiredMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: 'Your session has automatically ended after 15 minutes. Great work! 🎉',
+          isUser: false,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, expiredMessage]);
+        // Trigger end flow
+        setTimeout(() => handleEndSession(), 1000);
+      } else {
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: 'Sorry, I encountered an error. Please try again.',
+          isUser: false,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        console.error('Tutoring error:', error);
+      }
     } finally {
       setIsLoading(false);
     }
@@ -263,6 +354,20 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
     } else {
       navigate(`/boost?session=${sessionId}`);
     }
+  };
+  
+  // Format remaining time as MM:SS
+  const formatRemainingTime = (seconds: number): string => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+  
+  // Determine timer color based on remaining time
+  const getTimerColor = (): string => {
+    if (remainingSeconds <= 60) return 'text-red-600'; // Last minute - red
+    if (remainingSeconds <= 180) return 'text-orange-500'; // Last 3 minutes - orange
+    return 'text-gray-700'; // Normal - gray
   };
 
   // Document selection is handled before arriving on this page; no selector here.
@@ -312,11 +417,43 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       <div className="min-h-screen bg-gray-50 font-sans w-full">
         <div className="max-w-sm md:max-w-full mx-auto shadow-xl flex flex-col min-h-screen">
         <header className="bg-white border-b text-gray-900 p-4 sticky top-0 z-20">
-          <div className="flex justify-between items-center">
+          <div className="flex justify-between items-center gap-3">
             <h1 className="text-lg font-semibold m-0 truncate max-w-[8rem] md:max-w-xl">{sessionDocument || 'AI Tutor'}</h1>
+            
+            {/* Countdown Timer */}
+            <div 
+              className={`flex items-center gap-2 px-3 py-1.5 rounded-lg bg-gray-50 border ${
+                remainingSeconds <= 60 ? 'border-red-300 bg-red-50' : 
+                remainingSeconds <= 180 ? 'border-orange-300 bg-orange-50' : 
+                'border-gray-200'
+              }`}
+              aria-live="polite"
+              aria-atomic="true"
+            >
+              <svg 
+                className={`h-4 w-4 ${getTimerColor()}`} 
+                fill="none" 
+                viewBox="0 0 24 24" 
+                stroke="currentColor"
+              >
+                <path 
+                  strokeLinecap="round" 
+                  strokeLinejoin="round" 
+                  strokeWidth={2} 
+                  d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" 
+                />
+              </svg>
+              <span 
+                className={`text-sm font-mono font-semibold ${getTimerColor()}`}
+                title="Session will automatically end when timer reaches 0"
+              >
+                {formatRemainingTime(remainingSeconds)}
+              </span>
+            </div>
+            
             <button
               onClick={handleEndSession}
-              className="bg-red-100 text-red-600 font-semibold border border-red-600 rounded-xl px-3 py-1.5 text-sm cursor-pointer transition-all duration-300 hover:bg-red-300 hover:-translate-y-0.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed"
+              className="bg-red-100 text-red-600 font-semibold border border-red-600 rounded-xl px-3 py-1.5 text-sm cursor-pointer transition-all duration-300 hover:bg-red-300 hover:-translate-y-0.5 shadow-sm disabled:opacity-60 disabled:cursor-not-allowed whitespace-nowrap"
               disabled={isEndingSession}
             >
               {isEndingSession ? (

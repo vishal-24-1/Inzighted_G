@@ -5,11 +5,86 @@ from rest_framework import status
 import sentry_sdk
 import logging
 import time
+from datetime import timedelta
+from django.utils import timezone
+from django.conf import settings
 from ..models import ChatSession, SessionInsight, SessionFeedback
 from ..serializers import ChatSessionSerializer, SessionFeedbackSerializer
 
 # Module logger
 logger = logging.getLogger(__name__)
+
+
+def is_session_expired(session: ChatSession) -> bool:
+    """
+    Check if a tutoring session has exceeded the timeout duration.
+    
+    Args:
+        session: ChatSession instance
+        
+    Returns:
+        bool: True if session has been active longer than SESSION_TIMEOUT_MINS
+    """
+    timeout_mins = getattr(settings, 'SESSION_TIMEOUT_MINS', 15)
+    timeout_duration = timedelta(minutes=timeout_mins)
+    elapsed_time = timezone.now() - session.created_at
+    return elapsed_time > timeout_duration
+
+
+def end_session_helper(session: ChatSession) -> dict:
+    """
+    Shared helper to end a tutoring session, generate insights, and update progress.
+    Used by both manual end endpoint and automatic timeout logic.
+    
+    Args:
+        session: ChatSession instance to end
+        
+    Returns:
+        dict with keys: already_ended, insights_generated, insight_status, total_messages
+    """
+    # Check if session is already inactive (idempotent)
+    if not session.is_active:
+        logger.info(f"Session {session.id} already ended, returning cached status")
+        return {
+            "already_ended": True,
+            "insights_generated": False,
+            "insight_status": "already_completed",
+            "total_messages": session.messages.count()
+        }
+    
+    # Mark session as inactive
+    session.is_active = False
+    session.save()
+    
+    # Generate insights
+    try:
+        from api.insight_generator import generate_insights_for_session
+        insight = generate_insights_for_session(str(session.id))
+        insights_generated = insight is not None
+        insight_status = insight.status if insight else 'failed'
+    except Exception as e:
+        logger.error(f"Error generating insights for session {session.id}: {e}")
+        insights_generated = False
+        insight_status = 'failed'
+    
+    # Process session completion for XP/batch updates
+    try:
+        from ..progress import process_session_completion
+        proc_result = process_session_completion(session)
+        logger.info(f"process_session_completion result for session {session.id}: {proc_result}")
+    except Exception as e:
+        logger.error(f"Error running process_session_completion for session {session.id}: {e}")
+        try:
+            sentry_sdk.capture_exception(e)
+        except Exception:
+            pass
+    
+    return {
+        "already_ended": False,
+        "insights_generated": insights_generated,
+        "insight_status": insight_status,
+        "total_messages": session.messages.count()
+    }
 
 
 class TutoringSessionStartView(APIView):
@@ -67,6 +142,18 @@ class TutoringSessionAnswerView(APIView):
                 session = ChatSession.objects.get(id=session_id, user=user, is_active=True)
             except ChatSession.DoesNotExist:
                 return Response({"error": "Tutoring session not found or inactive"}, status=404)
+            
+            # Check if session has expired
+            if is_session_expired(session):
+                logger.info(f"Session {session.id} has exceeded timeout, auto-ending")
+                result = end_session_helper(session)
+                return Response({
+                    "error": "Session has timed out after 15 minutes",
+                    "session_expired": True,
+                    "message": "Your session has automatically ended. Great work!",
+                    "insights_generated": result["insights_generated"],
+                    "insight_status": result["insight_status"]
+                }, status=410)  # 410 Gone - resource expired
 
             from ..agent_flow import TutorAgent
             from ..models import QuestionItem
@@ -123,43 +210,36 @@ class TutoringSessionEndView(APIView):
         try:
             user = request.user
             try:
-                session = ChatSession.objects.get(id=session_id, user=user, is_active=True)
+                session = ChatSession.objects.get(id=session_id, user=user)
             except ChatSession.DoesNotExist:
-                return Response({"error": "Tutoring session not found or already ended"}, status=404)
-
-            session.is_active = False
-            session.save()
-
-            try:
-                from api.insight_generator import generate_insights_for_session
-                insight = generate_insights_for_session(str(session.id))
-                insights_generated = insight is not None
-                insight_status = insight.status if insight else 'failed'
-            except Exception:
-                insights_generated = False
-                insight_status = 'failed'
-
-            # Ensure session-level XP and batch progress are processed.
-            # process_session_completion is idempotent and will recompute
-            # user.total_xp_sum by summing completed SessionInsight.xp_points.
-            try:
-                from ..progress import process_session_completion
-                try:
-                    proc_result = process_session_completion(session)
-                    logger.info(f"process_session_completion result for session {session.id}: {proc_result}")
-                except Exception as e:
-                    # Don't let this break the endpoint; log and capture in Sentry
-                    logger.error(f"Error running process_session_completion for session {session.id}: {e}")
-                    try:
-                        sentry_sdk.capture_exception(e)
-                    except Exception:
-                        pass
-            except Exception:
-                # If import fails for any reason, ignore to preserve backward compatibility
-                pass
-
-            return Response({"message": "Tutoring session ended successfully", "session_id": str(session.id), "total_messages": session.messages.count(), "insights_generated": insights_generated, "insight_status": insight_status})
+                return Response({"error": "Tutoring session not found"}, status=404)
+            
+            # Use shared helper to end session (idempotent)
+            result = end_session_helper(session)
+            
+            if result["already_ended"]:
+                return Response({
+                    "message": "Tutoring session was already ended",
+                    "session_id": str(session.id),
+                    "total_messages": result["total_messages"],
+                    "insights_generated": False,
+                    "insight_status": result["insight_status"]
+                })
+            
+            return Response({
+                "message": "Tutoring session ended successfully",
+                "session_id": str(session.id),
+                "total_messages": result["total_messages"],
+                "insights_generated": result["insights_generated"],
+                "insight_status": result["insight_status"]
+            })
         except Exception as e:
+            sentry_sdk.capture_exception(e, extras={
+                "component": "tutoring",
+                "view": "TutoringSessionEndView",
+                "user_id": str(request.user.id) if request.user else None,
+                "session_id": session_id
+            })
             return Response({"error": f"Failed to end session: {str(e)}"}, status=500)
 
 
@@ -169,8 +249,20 @@ class TutoringSessionDetailView(APIView):
     def get(self, request, session_id):
         try:
             session = ChatSession.objects.get(id=session_id, user=request.user)
+            
+            # Check if session has expired and auto-end if still active
+            if session.is_active and is_session_expired(session):
+                logger.info(f"Session {session.id} expired during detail fetch, auto-ending")
+                end_session_helper(session)
+            
             serializer = ChatSessionSerializer(session)
-            return Response(serializer.data)
+            data = serializer.data
+            
+            # Add timeout information for frontend timer
+            data['session_expired'] = is_session_expired(session)
+            data['timeout_mins'] = getattr(settings, 'SESSION_TIMEOUT_MINS', 15)
+            
+            return Response(data)
         except ChatSession.DoesNotExist:
             return Response({"error": "Tutoring session not found"}, status=404)
 

@@ -43,9 +43,14 @@ def test_gemini_methods():
     # Test classify_intent
     print("\n1. Testing classify_intent()...")
     test_message = "The current is in phase with voltage at resonance."
+    test_question = "What happens to the phase relationship at resonance?"
     try:
-        result = gemini_client.classify_intent(test_message)
-        print(f"   ✅ Intent classification: {result}")
+        result = gemini_client.classify_intent(test_message, current_question=test_question)
+        print(f"   ✅ Intent classification result: {result}")
+        if result.get("valid"):
+            print(f"      Token: {result.get('token')}")
+        else:
+            print(f"      Invalid message: {result.get('message')}")
     except Exception as e:
         print(f"   ❌ Error: {e}")
     

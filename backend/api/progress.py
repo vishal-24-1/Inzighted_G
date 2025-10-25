@@ -6,9 +6,8 @@ This module handles two independent gamification systems:
 2. Batch System: XP-based progression with stars and batch levels
 
 Key Principles:
-- XP is calculated as: compute avg XP per session, then SUM those session averages
-  (i.e., for each completed session: session_avg = sum(question_xp) / num_questions,
-   then user.xp_points = sum of all session_avg values across all sessions)
+- XP is calculated as: SUM of all SessionInsight.xp_points across all completed sessions
+  (SessionInsight.xp_points is the total XP earned in that session)
 - Streak counts one test per day; missing a day resets the streak
 - Earned milestone badges persist even after streak resets
 - All updates use atomic transactions and idempotence checks
@@ -237,7 +236,7 @@ def process_session_completion(session):
         Exception: On database errors (should be caught by caller)
     """
     
-    from .models import EvaluatorResult, User, TutoringQuestionBatch
+    from .models import EvaluatorResult, User, TutoringQuestionBatch, SessionInsight
     
     try:
         with transaction.atomic():
@@ -309,20 +308,24 @@ def process_session_completion(session):
 
                 logger.info(f"User {user.id} total_xp_sum updated (no batch record): {old_total_xp} + {session_xp_int} = {user.total_xp_sum}")
             
-            # Recompute total XP by summing completed session insights for this user (idempotent)
-            from .models import SessionInsight
+            # NOTE: We DO NOT recompute from SessionInsight here because:
+            # 1. SessionInsight is generated asynchronously (often after this function runs)
+            # 2. Recomputing would overwrite the XP we just added above
+            # 3. The batch.xp_processed flag already ensures idempotence
+            # 4. total_xp_sum is the source of truth, SessionInsight.xp_points is derived from it
+
+            # Calculate ACTUAL total XP by summing all completed SessionInsights for star calculation
+            # This gives us the real cumulative XP earned across all sessions
             insight_qs = SessionInsight.objects.filter(user=user, status='completed')
             agg = insight_qs.aggregate(total=Sum('xp_points'))
-            total_from_insights = agg.get('total') or 0
-            # Only overwrite user.total_xp_sum if there are completed session insights.
-            # This avoids clobbering the just-added session XP when the SessionInsight
-            # for the current session hasn't been created yet (race between insight
-            # generation and session completion processing).
-            if insight_qs.exists():
-                user.total_xp_sum = int(total_from_insights)
+            actual_total_xp = agg.get('total') or 0
+            
+            # If no completed insights yet, use the current session's total XP
+            if actual_total_xp == 0:
+                actual_total_xp = session_total_xp
 
-            # Update stars and batch based on new total_xp_sum
-            result = update_on_xp(user, user.total_xp_sum)
+            # Update stars and batch based on ACTUAL total XP (not session averages)
+            result = update_on_xp(user, actual_total_xp)
             stars_earned = result['stars_earned']
             batch_upgraded = result['batch_upgraded']
 
@@ -353,17 +356,17 @@ def process_session_completion(session):
         raise
 
 
-def update_on_xp(user, avg_xp):
+def update_on_xp(user, total_xp):
     """
-    Update stars and batch progression based on average XP.
+    Update stars and batch progression based on total XP earned.
     
     This function calculates how many stars should be earned based on the
-    user's average XP across all tests, and handles batch upgrades when
-    all stars in a batch are completed.
+    user's actual total XP across all completed sessions, and handles batch 
+    upgrades when all stars in a batch are completed.
     
     Args:
         user: User instance (already locked with select_for_update())
-        avg_xp: Current average XP value
+        total_xp: Current total XP value (sum of all SessionInsight.xp_points)
         
     Returns:
         dict: {
@@ -375,10 +378,10 @@ def update_on_xp(user, avg_xp):
     old_star_count = user.current_star
     old_batch = user.batch_current
     
-    # Calculate how many stars should be earned based on avg XP
+    # Calculate how many stars should be earned based on total XP
     new_star_count = 0
     for threshold in STAR_XP_THRESHOLDS:
-        if avg_xp >= threshold:
+        if total_xp >= threshold:
             new_star_count += 1
         else:
             break
@@ -417,7 +420,7 @@ def update_on_xp(user, avg_xp):
             # Recalculate stars for new batch
             new_star_count_in_batch = 0
             for threshold in STAR_XP_THRESHOLDS:
-                if avg_xp >= threshold:
+                if total_xp >= threshold:
                     new_star_count_in_batch += 1
                 else:
                     break
@@ -500,21 +503,28 @@ def get_progress_summary(user):
     next_star_threshold = None
     xp_to_next_star = None
     
+    # Calculate ACTUAL total XP by summing all SessionInsight.xp_points (this is the real XP earned)
+    from .models import SessionInsight
+    from django.db.models import Sum
+    
+    sessions = SessionInsight.objects.filter(user=user, status='completed')
+    sessions_completed = sessions.count()
+    
+    # Get the REAL total XP (sum of all session XP, not averages)
+    total_xp_aggregate = sessions.aggregate(total=Sum('xp_points'))
+    actual_total_xp = total_xp_aggregate.get('total') or 0
+    
     if user.current_star < user.stars_per_batch:
         # Get threshold for next star
         next_star_idx = user.current_star  # 0-indexed
         if next_star_idx < len(STAR_XP_THRESHOLDS):
             next_star_threshold = STAR_XP_THRESHOLDS[next_star_idx]
-            xp_to_next_star = max(0, next_star_threshold - user.total_xp_sum)
-    
-    # Compute total completed sessions for this user
-    from .models import SessionInsight
-    sessions_completed = SessionInsight.objects.filter(user=user, status='completed').count()
+            xp_to_next_star = max(0, next_star_threshold - actual_total_xp)
 
     batch_summary = {
         'current_batch': user.batch_current,
         'current_star': user.current_star,
-        'xp_points': user.total_xp_sum,
+        'xp_points': actual_total_xp,  # Use ACTUAL total XP from SessionInsights
         'total_tests_taken': sessions_completed,
         'stars_per_batch': user.stars_per_batch,
         'xp_to_next_star': xp_to_next_star,
