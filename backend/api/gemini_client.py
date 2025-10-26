@@ -493,9 +493,11 @@ If valid: {{"valid": true, "token": "DIRECT_ANSWER"|"MIXED"|"RETURN_QUESTION"}}
 Handle {language} or English input.
 """
 
-            # Build full prompt
+            # Build full prompt and ensure the user's language is explicit in the prompt
             question_context = f"CURRENT_QUESTION: {current_question}" if current_question else "CURRENT_QUESTION: [No question context available]"
-            prompt = f"{system_prompt}\n\n{validation_instructions}\n\n{question_context}\n\nUSER_MESSAGE: {user_message}\n\nClassify (return JSON only):"
+            # Include a clear language header so the model interprets USER_MESSAGE in the user's preferred language
+            language_header = f"LANGUAGE: {language}. Interpret USER_MESSAGE in this language (also accept English).\n\n"
+            prompt = f"{system_prompt}\n\n{language_header}{validation_instructions}\n\n{question_context}\n\nUSER_MESSAGE: {user_message}\n\nClassify (return JSON only):"
             
             print(f"[CLASSIFIER] Enhanced prompt built (with question context)")
             print(f"[CLASSIFIER] Current question: {current_question[:80] if current_question else 'None'}...")
@@ -530,12 +532,29 @@ Handle {language} or English input.
                 
                 # Validate structure
                 if "valid" in result:
-                    if result["valid"] is False:
-                        # Invalid message detected
-                        message = result.get("message", "The message you sent is not valid. Please provide a valid answer or reply.")
-                        print(f"[CLASSIFIER] ✅ Invalid message detected")
-                        return {"valid": False, "message": message}
-                    elif result["valid"] is True and "token" in result:
+                        if result["valid"] is False:
+                            # Invalid message detected
+                            # Provide a language-aware default validation message when the model doesn't supply one
+                            default_invalid = None
+                            try:
+                                lang_lower = (language or 'english').lower()
+                            except Exception:
+                                lang_lower = 'english'
+
+                            if lang_lower.startswith('tang') or lang_lower == 'tanglish':
+                                default_invalid = "Ungaloda message puriyala. Dayavu seithu oru sariyana badhil kodunga."
+                            elif lang_lower.startswith('eng') or lang_lower == 'english':
+                                default_invalid = "The message you sent is not valid. Please provide a valid answer or reply."
+                            else:
+                                # Generic fallback in English with language hint
+                                default_invalid = "The message you sent is not valid. Please provide a valid answer or reply."
+
+                            # Always prefer a server-controlled, language-aware validation message
+                            # to ensure the user sees the feedback in their preferred language.
+                            message = default_invalid
+                            print(f"[CLASSIFIER] ✅ Invalid message detected")
+                            return {"valid": False, "message": message}
+                elif result["valid"] is True and "token" in result:
                         # Valid message with token
                         token = result["token"].upper()
                         valid_tokens = ['DIRECT_ANSWER', 'MIXED', 'RETURN_QUESTION']
@@ -560,7 +579,18 @@ Handle {language} or English input.
             invalid_indicators = ['invalid', 'not valid', 'gibberish', 'meaningless', 'not meaningful']
             if any(indicator in response.lower() for indicator in invalid_indicators):
                 print(f"[CLASSIFIER] Response indicates invalid message")
-                return {"valid": False, "message": "The message you sent is not valid. Please provide a valid answer or reply."}
+                # Use same language-aware default as above when model hints invalid
+                try:
+                    lang_lower = (language or 'english').lower()
+                except Exception:
+                    lang_lower = 'english'
+
+                if lang_lower.startswith('tang') or lang_lower == 'tanglish':
+                    default_invalid = "Ungaloda message puriyala. Dayavu seithu oru sariyana badhil kodunga."
+                else:
+                    default_invalid = "The message you sent is not valid. Please provide a valid answer or reply."
+
+                return {"valid": False, "message": default_invalid}
             
             # Ultimate fallback: use deterministic classifier
             print(f"[CLASSIFIER] Using deterministic fallback")

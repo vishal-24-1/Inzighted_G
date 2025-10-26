@@ -124,13 +124,23 @@ RULES for generation (must be implemented):
 1. Generate 10 rule-based questions per session per context.
 2. Use only the provided CONTEXT for question content. Do not invent out-of-context facts.
 3. Use the archetypes below. Each session of 10 should include a mix of archetypes.
-4. Format outputs as JSON objects, one per question. Return the full array.
-5. For each question record: question_id, archetype, question_text, difficulty, expected_answer
-6. Difficulty must be one of: easy, medium, hard.
-7. question_id is auto generated (use format: q_<random_string>).
-8. {language_phrasing}. Keep sentences short (<20 words).
-9. Save which archetype was used for the question.
-10. Where contextually appropriate, rewrite the question in the voice of a popular Tamil Nadu personality (e.g., Rajinikanth, Vijay, or Ajith), using their natural tone, famous dialogue style, or familiar movie references. Only apply this when it enhances engagement — keep the question neutral if forced usage feels unnatural. Ensure academic accuracy remains intact.
+4. When appropriate, phrase some questions in an indirect or "twisted" (Socratic) style to encourage inference and deeper thinking.
+   - Examples: present a short scenario, a partial fact, or a disguised prompt that requires the learner to infer the target concept.
+   - Do this for at most ~30-40% of the questions (i.e., 3-4 questions out of 10) and only when the CONTEXT supports it.
+   - IMPORTANT: Even for indirect questions, ensure the `expected_answer` field clearly maps to the intended correct response so automatic evaluation remains reliable.
+5. Include a mix of question types. For each question object, add an optional `question_type` field with one of: `descriptive`, `mcq`, `true_false`, `problem`.
+        - Aim for a balanced mix over 10 questions (suggested: 3-4 descriptive, 2-3 mcq, 1-2 true_false, 2-3 problem-solving) when the CONTEXT allows.
+        - For `mcq` questions include an `options` array (4 items preferred) and ensure `expected_answer` exactly matches one option.
+        - For `true_false` use `expected_answer` = `True` or `False` (boolean or string acceptable).
+        - For `problem` questions, `expected_answer` should contain the final numeric/short answer and (optionally) a brief solution outline.
+        - If a question_type is omitted, treat it as `descriptive` by default.
+6. Format outputs as JSON objects, one per question. Return the full array.
+7. For each question record: question_id, archetype, question_text, difficulty, expected_answer
+8. Difficulty must be one of: easy, medium, hard.
+9. question_id is auto generated (use format: q_<random_string>).
+10. {language_phrasing}. Keep sentences short (<20 words).
+11. Save which archetype was used for the question.
+12. Where contextually appropriate, rewrite the question in the voice of a popular Tamil Nadu personality (e.g., Rajinikanth, Vijay, or Ajith), using their natural tone, famous dialogue style, or familiar movie references. Only apply this when it enhances engagement — keep the question neutral if forced usage feels unnatural. Ensure academic accuracy remains intact.
 {archetypes_block}
 
 {required_output}

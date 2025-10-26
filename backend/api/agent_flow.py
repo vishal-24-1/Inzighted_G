@@ -350,10 +350,39 @@ class TutorAgent:
                     "evaluation": None
                 }
             
-            # User asked another follow-up question - answer it and append proceed prompt inline
-            print(f"[AGENT] User asked follow-up question, will answer and append proceed prompt inline")
+            # User asked another follow-up question - VALIDATE it first using classifier
+            print(f"[AGENT] User sent follow-up message, validating with classifier...")
+            
+            # Run validation through classifier
+            current_question_text = current_question_item.question_text if current_question_item else None
+            classifier_result = gemini_client.classify_intent(
+                user_message, 
+                current_question=current_question_text,
+                language=self.language
+            )
+            print(f"[AGENT] Classifier result for follow-up: {classifier_result}")
+            
+            # Check if message is invalid
+            if not classifier_result.get("valid", True):
+                invalid_message = classifier_result.get("message", "The message you sent is not valid. Please provide a valid answer or reply.")
+                print(f"[AGENT] ⚠️ Invalid follow-up message detected\n")
+                
+                # Return validation error with proceed prompt
+                return {
+                    "reply": invalid_message + "\n\n" + PROCEED_PROMPT,
+                    "next_question": None,
+                    "session_complete": False,
+                    "evaluation": None
+                }
+            
+            # Valid follow-up question - answer it
+            print(f"[AGENT] Valid follow-up question, will answer and append proceed prompt inline")
             try:
-                clarification_reply = self._answer_user_question_with_rag(user_message, current_question_item)
+                clarification_reply = self._answer_user_question_with_rag(
+                    user_message, 
+                    current_question_item,
+                    user_msg_record=user_msg_record
+                )
             except Exception as e:
                 logger.error(f"[AGENT] Error answering follow-up question: {e}")
                 clarification_reply = "Sorry, I couldn't fetch an answer right now."
@@ -474,8 +503,13 @@ class TutorAgent:
         """
         logger.info("Handling MIXED flow")
         
-        # First, answer the follow-up question part using RAG
-        followup_reply = self._answer_user_question_with_rag(user_message, question_item, user_message)
+        # First, answer the follow-up question part using RAG with language preference
+        followup_reply = self._answer_user_question_with_rag(
+            user_message, 
+            question_item, 
+            user_message,
+            user_msg_record=user_msg_record
+        )
         
         # Then evaluate the answer portion
         # For MIXED messages, the whole message is treated as the answer for evaluation
@@ -510,10 +544,14 @@ class TutorAgent:
         print(f"\n[AGENT] === RETURN_QUESTION Flow ===")
         print(f"[AGENT] User asked: {user_message[:80]}...")
         
-        # Answer the user's question using RAG
+        # Answer the user's question using RAG with language preference and context awareness
         print(f"[AGENT] Calling RAG to answer user's question...")
         try:
-            clarification_reply = self._answer_user_question_with_rag(user_message, question_item)
+            clarification_reply = self._answer_user_question_with_rag(
+                user_message, 
+                question_item,
+                user_msg_record=user_msg_record
+            )
             print(f"[AGENT] RAG reply length: {len(clarification_reply)} chars")
             print(f"[AGENT] RAG reply preview: {clarification_reply[:150]}...")
         except Exception as e:
@@ -619,21 +657,32 @@ class TutorAgent:
             
             return evaluator_result
     
-    def _answer_user_question_with_rag(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None) -> str:
+    def _answer_user_question_with_rag(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None, user_msg_record: ChatMessage = None) -> str:
         """
         Answer user's question using RAG (Retrieval Augmented Generation).
         Uses the document context and attempts to answer in the user's preferred language.
         Now includes session Q&A context for better responses.
+        
+        Args:
+            user_message: The user's question to answer
+            current_question_item: Current question item for context
+            student_answer: Student's answer (for MIXED flow)
+            user_msg_record: User message record for chat context awareness
         """
         try:
             # Build context with current question/answer and session history
-            context_prompt = self._build_session_context(user_message, current_question_item, student_answer)
+            context_prompt = self._build_session_context(
+                user_message, 
+                current_question_item, 
+                student_answer,
+                user_msg_record=user_msg_record
+            )
             
-            # Use RAG to answer the user's question with context
+            # Use RAG to answer the user's question with context and language preference
             from .rag_query import query_rag
             
-            logger.info(f"[RAG] Answering user question with session context: {user_message[:50]}...")
-            rag_response = query_rag(self.user_id, context_prompt)
+            logger.info(f"[RAG] Answering user question with session context in {self.language}: {user_message[:50]}...")
+            rag_response = query_rag(self.user_id, context_prompt, language=self.language)
             logger.info(f"[RAG] Raw response length: {len(rag_response)} chars, preview: {rag_response[:100]}...")
             
             # Check if RAG returned general knowledge fallback (contains the note)
@@ -657,30 +706,33 @@ class TutorAgent:
                 if lang == 'tanglish':
                     summary_instr = (
                         "Convert this answer into concise Tanglish style (mix of Tamil and English). "
-                        "Keep the key information but make it conversational and brief (under 150 words). "
-                        "IMPORTANT: You must PROVIDE the answer, not ask the user a question."
+                        "Keep the key information but make it conversational and brief (max 30 words). "
+                        "CRITICAL: You must PROVIDE the answer, not ask the user a question. "
+                        "Ensure your response is complete with proper ending - do not cut off mid-sentence or leave incomplete."
                     )
-                    summary_suffix = "Tanglish version (provide the answer):"
+                    summary_suffix = "Tanglish version (max 30 words, complete):"
                 elif lang == 'english':
                     summary_instr = (
                         "Convert this answer into concise English. "
-                        "Keep the key information but make it conversational and brief (under 150 words). "
-                        "IMPORTANT: You must PROVIDE the answer, not ask the user a question."
+                        "Keep the key information but make it conversational and brief (max 30 words). "
+                        "CRITICAL: You must PROVIDE the answer, not ask the user a question. "
+                        "Ensure your response is complete with proper ending - do not cut off mid-sentence or leave incomplete."
                     )
-                    summary_suffix = "English version (provide the answer):"
+                    summary_suffix = "English version (max 30 words, complete):"
                 else:
                     # Generic instruction when an unknown language is requested
                     summary_instr = (
                         f"Convert this answer into concise {lang} style. "
-                        "Keep the key information but make it conversational and brief (under 150 words). "
-                        "IMPORTANT: You must PROVIDE the answer, not ask the user a question."
+                        "Keep the key information but make it conversational and brief (max 30 words). "
+                        "CRITICAL: You must PROVIDE the answer, not ask the user a question. "
+                        "Ensure your response is complete with proper ending - do not cut off mid-sentence or leave incomplete."
                     )
-                    summary_suffix = f"{lang} version (provide the answer):"
+                    summary_suffix = f"{lang} version (max 30 words, complete):"
 
                 summary_prompt = (
                     f"{summary_instr}\n\nOriginal answer:\n{rag_response}\n\n{summary_suffix}"
                 )
-                tmp_resp = gemini_client.generate_response(summary_prompt, max_tokens=200)
+                tmp_resp = gemini_client.generate_response(summary_prompt, max_tokens=150, max_words=30)
                 rag_response = strip_gamification_prefix(tmp_resp)
                 logger.info(f"[RAG] Summary ({lang}): {rag_response[:100]}...")
             
@@ -708,12 +760,13 @@ class TutorAgent:
 
                 rewrite_prompt = (
                     f"{rewrite_instr} Do NOT ask the user any follow-up questions or tell them to try anything. "
-                    f"Keep key facts and, if available, include short citations in square brackets like [doc:chunk].\n\n"
+                    f"Keep key facts and, if available, include short citations in square brackets like [doc:chunk]. "
+                    f"CRITICAL: Maximum 30 words. Ensure your response is complete with proper ending - do not cut off mid-sentence or leave incomplete.\n\n"
                     f"Original text:\n{rag_response}\n\n"
-                    f"{rewrite_suffix}"
+                    f"{rewrite_suffix} (max 30 words, complete):"
                 )
                 try:
-                    rewritten = gemini_client.generate_response(rewrite_prompt, max_tokens=200)
+                    rewritten = gemini_client.generate_response(rewrite_prompt, max_tokens=150, max_words=30)
                     if rewritten:
                         rag_response = strip_gamification_prefix(rewritten.strip())
                         logger.info(f"[RAG] Rewrote prompting output into direct answer: {rag_response[:120]}...")
@@ -733,9 +786,16 @@ class TutorAgent:
             else:
                 return "I see."
     
-    def _build_session_context(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None, max_chars: int = 8000) -> str:
+    def _build_session_context(self, user_message: str, current_question_item: QuestionItem = None, student_answer: str = None, user_msg_record: ChatMessage = None, max_chars: int = 8000) -> str:
         """
         Build context prompt including current question/answer and all session Q&A history.
+        
+        Args:
+            user_message: The user's current message/question
+            current_question_item: Current question item for context
+            student_answer: Student's answer (for MIXED flow)
+            user_msg_record: User message record for including recent chat context
+            max_chars: Maximum character limit for context
         """
         context_parts = []
         
@@ -761,6 +821,23 @@ class TutorAgent:
                         context_parts.append(qa_entry)
         except Exception as e:
             logger.warning(f"Could not fetch session history: {e}")
+        
+        # Add recent chat messages for context awareness (if user_msg_record provided)
+        if user_msg_record:
+            try:
+                # Get last 5 messages before this one for context
+                recent_messages = ChatMessage.objects.filter(
+                    session=self.session,
+                    created_at__lt=user_msg_record.created_at
+                ).order_by('-created_at')[:5]
+                
+                if recent_messages:
+                    context_parts.append("\nRECENT CHAT CONTEXT:")
+                    for msg in reversed(list(recent_messages)):  # Show in chronological order
+                        role = "USER" if msg.is_user_message else "ASSISTANT"
+                        context_parts.append(f"{role}: {msg.content[:100]}")
+            except Exception as e:
+                logger.warning(f"Could not fetch recent chat context: {e}")
         
         # Combine all context
         full_context = "\n\n".join(context_parts)

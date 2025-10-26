@@ -19,11 +19,17 @@ import sentry_sdk
 
 
 
-def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
+def query_rag(user_id: str, query: str, top_k: int = 5, language: str = "tanglish") -> str:
     """
     Queries the RAG system for a given user and query.
+    
+    Args:
+        user_id: User ID for tenant isolation
+        query: Query text
+        top_k: Number of top results to retrieve
+        language: Preferred language for response (tanglish, english, etc.)
     """
-    print(f"Starting RAG query for user {user_id}...")
+    print(f"Starting RAG query for user {user_id} with language={language}...")
 
     # 1. Get tenant tag (namespace)
     tenant_tag = get_tenant_tag(user_id)
@@ -110,9 +116,10 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
         
         fallback_prompt = (
             "You are a helpful educational assistant. The user has asked a question but no relevant content was found in their uploaded documents.\n"
-            "Provide a helpful, educational answer based on your general knowledge. Keep the response concise and informative.\n"
+            "Provide a helpful, educational answer based on your general knowledge in {language}.\n"
+            "CRITICAL: Your response must be complete within 30 words - do not leave sentences unfinished. Phrase it concisely.\n"
             "QUESTION: {query}\n\n"
-            "Provide a helpful answer:"
+            "Provide a helpful answer in {language} (max 30 words, complete sentences):"
         )
         
         try:
@@ -121,9 +128,9 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
                 return "Error: AI service is not available. Please check your configuration."
             
             fallback_response = gemini_client.generate_response(
-                fallback_prompt.format(query=query), 
-                max_tokens=800,
-                max_words=15
+                fallback_prompt.format(query=query, language=language), 
+                max_tokens=150,
+                max_words=30
             )
             
             # Add a note that this is general knowledge
@@ -146,19 +153,20 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
     context = "\n".join([f"[{sid}#{ci}] {txt}" for sid, ci, txt in context_items])
 
     prompt_template = (
-        "You are a helpful assistant that MUST answer using ONLY the provided context below.\n"
+        "You are a helpful assistant that MUST answer using ONLY the provided context below in {language}.\n"
         "CRITICAL RULES:\n"
         "- Do NOT use any external knowledge or make assumptions beyond the context.\n"
         "- If the context does NOT contain information to answer the question, you MUST respond EXACTLY with: 'NO_ANSWER_IN_CONTEXT'\n"
         "- Only provide an answer if you can directly find the information in the context.\n"
         "- Do NOT try to infer, deduce, or piece together partial information.\n"
-        "- Provide concise answers with specific references to the context when available.\n\n"
+        "- Provide concise answers in {language} with specific references to the context when available.\n"
+        "- CRITICAL: Your response must be complete within 30 words - do not leave sentences unfinished. Phrase it concisely and ensure proper ending.\n\n"
         "CONTEXT:\n{context}\n\n"
         "QUESTION:\n{query}\n\n"
-        "Answer now (or respond with 'NO_ANSWER_IN_CONTEXT' if the context doesn't contain the answer):"
+        "Answer now in {language} (max 30 words, complete sentences only, or respond with 'NO_ANSWER_IN_CONTEXT'):"
     )
 
-    augmented_prompt = prompt_template.format(context=context.strip(), query=query)
+    augmented_prompt = prompt_template.format(context=context.strip(), query=query, language=language)
 
     # 6. Call Gemini LLM with context
     try:
@@ -166,7 +174,7 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
         if not gemini_client.is_available():
             return "Error: Gemini LLM client is not available. Please check your LLM_API_KEY configuration."
         
-        llm_response = gemini_client.generate_response(augmented_prompt, max_tokens=1000)
+        llm_response = gemini_client.generate_response(augmented_prompt, max_tokens=150, max_words=30)
         print("Gemini LLM response received.")
         print(f"LLM response: {llm_response[:200]}...")  # Debug log
         
@@ -195,16 +203,17 @@ def query_rag(user_id: str, query: str, top_k: int = 5) -> str:
             # Use general knowledge fallback
             fallback_prompt = (
                 "You are a helpful educational assistant. The user has asked a question but the specific content in their documents doesn't contain the answer.\n"
-                "Provide a helpful, educational answer based on your general knowledge. Keep the response concise and informative.\n"
+                "Provide a helpful, educational answer based on your general knowledge in {language}.\n"
+                "CRITICAL: Your response must be complete within 30 words - do not leave sentences unfinished. Phrase it concisely.\n"
                 "QUESTION: {query}\n\n"
-                "Provide a helpful answer:"
+                "Provide a helpful answer in {language} (max 30 words, complete sentences):"
             )
             
             try:
                 fallback_response = gemini_client.generate_response(
-                    fallback_prompt.format(query=query), 
-                    max_tokens=800,
-                    max_words=15
+                    fallback_prompt.format(query=query, language=language), 
+                    max_tokens=150,
+                    max_words=30
                 )
                 
                 if fallback_response and not fallback_response.startswith("Error:"):
