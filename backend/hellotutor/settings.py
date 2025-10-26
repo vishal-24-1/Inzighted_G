@@ -50,7 +50,7 @@ SECRET_KEY = "django-insecure-&pgzg*q&wfr2u!ng&+(dn-rs%bbhd&@bfv(hptx75$cyp9-4m8
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ["localhost", "127.0.0.1", "app.inzighted.com","server.inzighted.com", "3.215.97.244"]
+ALLOWED_HOSTS = ["localhost", "127.0.0.1", "app.inzighted.com","server.inzighted.com", "3.215.97.244", "192.168.1.16"]
 
 
 # Application definition
@@ -279,3 +279,12 @@ CORS_ALLOW_HEADERS = [
     'x-csrftoken',
     'x-requested-with',
 ]
+
+# Development convenience: allow local-network origins when debugging so mobile/dev
+# devices on the same LAN (e.g. http://192.168.x.x:3000) can access the API.
+# IMPORTANT: this is only enabled when DEBUG=True. Do NOT enable in production.
+if DEBUG:
+    # Allow all origins in dev to simplify testing from devices on the LAN.
+    # If you prefer to be explicit, replace with e.g.:
+    # CORS_ALLOWED_ORIGINS += ["http://192.168.1.16:3000"]
+    CORS_ALLOW_ALL_ORIGINS = True

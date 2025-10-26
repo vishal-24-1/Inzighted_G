@@ -2,7 +2,13 @@ import axios from 'axios';
 
 // Defaults
 const DEFAULT_PROD_API = 'https://server.inzighted.com/api';
-const DEFAULT_DEV_API = 'http://localhost:8000/api';
+// In development, prefer calling the same host that's serving the frontend so
+// mobile devices on the LAN (e.g. http://192.168.x.x:3000) will talk to the
+// development backend running on the dev machine (port 8000). If REACT_APP_API_BASE_URL
+// is set explicitly it will still take precedence.
+const DEFAULT_DEV_API = (typeof window !== 'undefined' && window.location.hostname)
+  ? `http://${window.location.hostname}:8000/api`
+  : 'http://localhost:8000/api';
 const DEFAULT_PROD_PRODUCT_URL = 'https://app.inzighted.com';
 const DEFAULT_DEV_PRODUCT_URL = 'http://localhost:3000';
 

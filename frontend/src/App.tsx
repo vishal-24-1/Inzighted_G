@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import { AuthProvider, useAuth } from './utils/AuthContext';
@@ -52,6 +52,22 @@ const AuthRedirect: React.FC = () => {
 };
 
 function App() {
+  // Set a dynamic --vh CSS variable to match the actual viewport height on mobile.
+  // This avoids using 100vh (which changes when the browser chrome hides) and
+  // lets us size the root container to the visible viewport so scrolling
+  // happens inside the app instead of the document. That prevents Chrome's
+  // URL bar from auto-hiding when the page is scrolled.
+  useEffect(() => {
+    const setVh = () => {
+      // each unit = 1% of the viewport height
+      document.documentElement.style.setProperty('--vh', `${window.innerHeight * 0.01}px`);
+    };
+
+    setVh();
+    window.addEventListener('resize', setVh);
+    return () => window.removeEventListener('resize', setVh);
+  }, []);
+
   // If the client ID is missing, avoid initializing the Google provider to prevent
   // the GSI library from throwing a runtime error. Show a developer-friendly overlay.
   if (!GOOGLE_CLIENT_ID) {
@@ -76,8 +92,11 @@ function App() {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <AuthProvider>
         <Router>
-          <div className="App">
-            <Routes>
+          {/* Use app-root / app-scroll to keep document from scrolling and to size
+              to the actual visible viewport via --vh. */}
+          <div className="App app-root">
+            <div className="app-scroll">
+              <Routes>
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route 
@@ -121,7 +140,8 @@ function App() {
                 } 
               />
               <Route path="*" element={<AuthRedirect />} />
-            </Routes>
+              </Routes>
+            </div>
           </div>
         </Router>
       </AuthProvider>

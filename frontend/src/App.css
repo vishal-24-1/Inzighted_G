@@ -1,0 +1,40 @@
+/* Dynamic viewport handling to avoid mobile browser chrome hiding on scroll.
+	 We set --vh from JS to equal 1% of the actual viewport height and then
+	 size the app root to calc(var(--vh) * 100). This prevents document-level
+	 scroll that triggers Chrome's URL bar to auto-hide.
+*/
+
+:root {
+	/* fallback value; updated by JS on mount */
+	--vh: 1vh;
+}
+
+html, body, #root {
+	height: calc(var(--vh) * 100);
+	margin: 0;
+	padding: 0;
+	/* prevent the document from scrolling */
+	overflow: hidden;
+}
+
+.App, .app-root {
+	height: 100%;
+	display: flex;
+	flex-direction: column;
+}
+
+/* Scrollable area inside the app. Scrolling here avoids document-level
+	 scrolling and helps keep the browser chrome visible. */
+.app-scroll {
+	height: 100%;
+	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+}
+
+/* Keep any full-screen overlays working as before */
+.loading-container {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
