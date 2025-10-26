@@ -10,6 +10,8 @@ interface Message {
   text: string;
   isUser: boolean;
   timestamp: Date;
+  questionNumber?: number;
+  totalQuestions?: number;
 }
 
 // Avoid duplicating DOM SpeechRecognition types; use runtime checks and `any` for instances
@@ -173,8 +175,30 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
 
   useEffect(() => {
     // Auto-scroll to bottom when new messages are added
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Use a small delay to ensure DOM has fully rendered with new heights
+    const scrollToBottom = () => {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    };
+    
+    // Immediate scroll
+    scrollToBottom();
+    
+    // Delayed scroll to handle dynamic content height (like question badges)
+    const timer = setTimeout(scrollToBottom, 100);
+    
+    return () => clearTimeout(timer);
   }, [messages]);
+
+  // Additional scroll when loading finishes to ensure response is fully visible
+  useEffect(() => {
+    if (!isLoading && messages.length > 0) {
+      // Small delay to ensure content is rendered
+      const timer = setTimeout(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+      }, 150);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, messages.length]);
 
   // Auto-focus the input when the chat is visible and ready.
   useEffect(() => {
@@ -211,7 +235,9 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
         id: msg.id,
         text: msg.content,
         isUser: msg.is_user_message,
-        timestamp: new Date(msg.created_at)
+        timestamp: new Date(msg.created_at),
+        questionNumber: msg.question_number,
+        totalQuestions: msg.total_questions
       }));
 
       setMessages(sessionMessages);
@@ -294,12 +320,21 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
         // If the agent provided feedback (reply), show it immediately
         const itemsToAppend: Message[] = [];
 
+        // Get current question number context for feedback
+        const currentQuestionNumber = response.data.next_question?.question_number 
+          ? response.data.next_question.question_number - 1 
+          : response.data.feedback?.question_number;
+        const totalQuestions = response.data.next_question?.total_questions || response.data.feedback?.total_questions;
+
         if (response.data.feedback && response.data.feedback.text) {
           const feedbackMessage: Message = {
             id: response.data.feedback.id || (Date.now() + 2).toString(),
             text: response.data.feedback.text,
             isUser: false,
-            timestamp: new Date()
+            timestamp: new Date(),
+            // Carry over question number context to feedback
+            questionNumber: currentQuestionNumber,
+            totalQuestions: totalQuestions
           };
           itemsToAppend.push(feedbackMessage);
         }
@@ -310,7 +345,9 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
             id: response.data.next_question.id,
             text: response.data.next_question.text,
             isUser: false,
-            timestamp: new Date(response.data.next_question.created_at)
+            timestamp: new Date(response.data.next_question.created_at),
+            questionNumber: response.data.next_question.question_number,
+            totalQuestions: response.data.next_question.total_questions
           };
           itemsToAppend.push(nextQuestion);
         }
@@ -529,25 +566,33 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
           </header>
 
           <main className="flex-1 flex flex-col" style={{ height: 'calc(var(--vh, 1vh) * 100 - 80px)' }}>
-            <div className="flex-1 overflow-y-auto p-4">
-              <div className="flex flex-col gap-4">
+            <div className="flex-1 overflow-y-auto p-4 pb-8">
+              <div className="flex flex-col gap-2 pb-4">{/* Added pb-4 to ensure last message has breathing room */}
                 {messages.map((message) => (
                   <div
                     key={message.id}
-                    className={`flex w-full ${message.isUser ? 'justify-end' : 'justify-start'}`}
+                    className={`flex w-full ${message.isUser ? 'justify-end' : 'justify-start'} mb-3`}
                   >
                     {/* On mobile keep 80% width; on desktop reduce to ~60% for better visuals */}
                     <div className={`max-w-[80%] md:max-w-[60%]`}>
-                      <div className={`bg-white rounded-2xl py-2 px-3 shadow-md relative hover:shadow-lg transition-shadow duration-200 ${message.isUser ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white' : 'bg-white text-gray-800'}`}>
-                        <div className="text-sm leading-relaxed text-left">{message.text}</div>
+                      {/* Show question number badge for bot messages that have question_number */}
+                      {!message.isUser && message.questionNumber && message.totalQuestions && (
+                        <div className="mb-1.5 flex items-center gap-1.5">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                            Q.{message.questionNumber}/{message.totalQuestions}
+                          </span>
+                        </div>
+                      )}
+                      <div className={`rounded-2xl py-3 px-4 shadow-md relative hover:shadow-lg transition-shadow duration-200 ${message.isUser ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white' : 'bg-white text-gray-800'}`}>
+                        <div className="text-sm leading-relaxed text-left whitespace-pre-wrap break-words">{message.text}</div>
                       </div>
                     </div>
                   </div>
                 ))}
                 {isLoading && (
-                  <div className="flex w-full justify-start">
+                  <div className="flex w-full justify-start mb-3">
                     <div className="max-w-[80%] md:max-w-[60%]">
-                      <div className="bg-white rounded-2xl py-2 px-3 shadow-md">
+                      <div className="bg-white rounded-2xl py-3 px-4 shadow-md">
                         <div className="flex gap-1 p-2">
                           <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce"></span>
                           <span className="w-2 h-2 rounded-full bg-gray-500 animate-bounce" style={{ animationDelay: '0.1s' }}></span>
@@ -557,7 +602,8 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
                     </div>
                   </div>
                 )}
-                <div ref={messagesEndRef} />
+                {/* Scroll anchor with height to ensure proper scroll behavior */}
+                <div ref={messagesEndRef} className="h-4" />
               </div>
             </div>
 

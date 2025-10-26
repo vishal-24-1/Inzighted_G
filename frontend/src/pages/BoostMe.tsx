@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../utils/AuthContext';
 import { useNavigate } from 'react-router-dom';
 import { insightsAPI } from '../utils/api';
-import { Target, CheckCircle2, TrendingUp, Award, Plus, TextAlignStart, Sparkles } from 'lucide-react';
+import { Target, CheckCircle2, TrendingUp, Award, Plus, TextAlignStart, Sparkles, Info } from 'lucide-react';
 import Sidebar from '../components/Sidebar';
 import UserProfilePopup from '../components/UserProfilePopup';
 import MobileDock from '../components/MobileDock';
@@ -22,6 +22,9 @@ interface Insights {
   focus_zone?: string[];
   steady_zone?: string[];
   edge_zone?: string[];
+  focus_zone_reasons?: string[];
+  steady_zone_reasons?: string[];
+  edge_zone_reasons?: string[];
   xp_points?: number;
   accuracy?: number;
   // support alternate shapes
@@ -57,12 +60,29 @@ const BoostMe: React.FC = () => {
   const [touchEnd, setTouchEnd] = useState<number | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showProfilePopup, setShowProfilePopup] = useState(false);
+  const [activeInfoPopover, setActiveInfoPopover] = useState<string | null>(null);
 
 
   useEffect(() => {
     // If URL has a session query param, we'll auto-select that session after loading
     loadSessions();
   }, []);
+
+  // Close popover when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (activeInfoPopover) {
+        const target = event.target as HTMLElement;
+        // Check if click is outside popover and info button
+        if (!target.closest('.info-popover') && !target.closest('.info-button')) {
+          setActiveInfoPopover(null);
+        }
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [activeInfoPopover]);
 
   const handleGoHome = () => {
     navigate('/');
@@ -134,6 +154,9 @@ const BoostMe: React.FC = () => {
         focus_zone: parseZoneField(zonePerf?.focus ?? raw.insights?.focus_zone ?? raw.insights?.focus),
         steady_zone: parseZoneField(zonePerf?.steady ?? raw.insights?.steady_zone ?? raw.insights?.steady),
         edge_zone: parseZoneField(zonePerf?.edge ?? raw.insights?.edge_zone ?? raw.insights?.edge),
+        focus_zone_reasons: parseZoneField(raw.insights?.focus_zone_reasons ?? []),
+        steady_zone_reasons: parseZoneField(raw.insights?.steady_zone_reasons ?? []),
+        edge_zone_reasons: parseZoneField(raw.insights?.edge_zone_reasons ?? []),
         xp_points: perf?.xp ?? perf?.xp_points ?? raw.insights?.xp_points ?? raw.insights?.xp ?? 0,
         accuracy: perf?.accuracy ?? raw.insights?.accuracy ?? 0,
         // keep copies of raw shapes in case other code expects them
@@ -265,6 +288,7 @@ const BoostMe: React.FC = () => {
       type: 'Focus Zone',
       description: 'Areas to improve',
       content: insights.insights.focus_zone,
+      reasons: insights.insights.focus_zone_reasons,
       color: '#dc3545',
       icon: <Target size={20} className="text-white" />
     },
@@ -272,6 +296,7 @@ const BoostMe: React.FC = () => {
       type: 'Steady Zone',
       description: 'Strong areas',
       content: insights.insights.steady_zone,
+      reasons: insights.insights.steady_zone_reasons,
       color: '#28a745',
       icon: <CheckCircle2 size={20} className="text-white" />
     },
@@ -279,6 +304,7 @@ const BoostMe: React.FC = () => {
       type: 'Edge Zone',
       description: 'Growth potential',
       content: insights.insights.edge_zone,
+      reasons: insights.insights.edge_zone_reasons,
       color: '#007bff',
       icon: <TrendingUp size={20} className="text-white" />
     }
@@ -409,13 +435,51 @@ const BoostMe: React.FC = () => {
             {/* Zone Cards (stacked vertically) */}
             <div className="w-full space-y-4">
               {boostMeCards.map((card, index) => (
-                <div key={index} className="rounded-xl p-2" style={{ backgroundImage: `linear-gradient(135deg, ${hexToRgba(card.color, 0.18)}, ${hexToRgba(card.color, 0.36)})` }}>
-                  <div className="flex items-center mb-2 pl-2 pt-2">
+                <div key={index} className="rounded-xl p-2 relative" style={{ backgroundImage: `linear-gradient(135deg, ${hexToRgba(card.color, 0.18)}, ${hexToRgba(card.color, 0.36)})` }}>
+                  <div className="flex items-center justify-between mb-2 pl-2 pt-2">
                     <div>
                       <h3 className="text-lg font-semibold text-gray-800">{card.type}</h3>
                       <p className="text-xs text-gray-500">{card.description}</p>
                     </div>
+                    {/* Info button */}
+                    {card.reasons && card.reasons.length > 0 && (
+                      <button
+                        onClick={() => setActiveInfoPopover(activeInfoPopover === card.type ? null : card.type)}
+                        className="info-button w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-gray-50 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-300"
+                        aria-label={`Show reasons for ${card.type}`}
+                        title={`Why this insight?`}
+                      >
+                        <Info size={16} className="text-gray-700" />
+                      </button>
+                    )}
                   </div>
+                  
+                  {/* Popover for reasons */}
+                  {activeInfoPopover === card.type && card.reasons && card.reasons.length > 0 && (
+                    <div className="info-popover absolute top-full right-2 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-lg shadow-xl border border-gray-200 p-4 z-50 animate-fadeIn">
+                      <div className="flex items-start justify-between mb-2">
+                        <h4 className="text-sm font-semibold text-gray-800">Why this insight?</h4>
+                        <button
+                          onClick={() => setActiveInfoPopover(null)}
+                          className="text-gray-400 hover:text-gray-600 focus:outline-none"
+                          aria-label="Close"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        </button>
+                      </div>
+                      <ul className="space-y-2 text-xs text-gray-600">
+                        {card.reasons.map((reason, idx) => (
+                          <li key={idx} className="flex items-start gap-2">
+                            <span className="text-blue-500 mt-0.5">•</span>
+                            <span>{reason}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  
                   <div className="text-sm text-gray-700 text-left bg-white rounded-lg px-2 py-4">
                     {Array.isArray(card.content) && card.content.length > 0 ? (
                       <ul className="list-disc pl-5 space-y-2">
