@@ -128,9 +128,8 @@ RULES for generation (must be implemented):
    - Examples: present a short scenario, a partial fact, or a disguised prompt that requires the learner to infer the target concept.
    - Do this for at most ~30-40% of the questions (i.e., 3-4 questions out of 10) and only when the CONTEXT supports it.
    - IMPORTANT: Even for indirect questions, ensure the `expected_answer` field clearly maps to the intended correct response so automatic evaluation remains reliable.
-5. Include a mix of question types. For each question object, add an optional `question_type` field with one of: `descriptive`, `mcq`, `true_false`, `problem`.
-        - Aim for a balanced mix over 10 questions (suggested: 3-4 descriptive, 2-3 mcq, 1-2 true_false, 2-3 problem-solving) when the CONTEXT allows.
-        - For `mcq` questions include an `options` array (4 items preferred) and ensure `expected_answer` exactly matches one option.
+5. Include a mix of question types. For each question object, add an optional `question_type` field with one of: `descriptive`, `true_false`, `problem`.
+        - Aim for a balanced mix over 10 questions (suggested: 5-6 descriptive, 2-3 true_false, 2-3 problem-solving) when the CONTEXT allows.
         - For `true_false` use `expected_answer` = `True` or `False` (boolean or string acceptable).
         - For `problem` questions, `expected_answer` should contain the final numeric/short answer and (optionally) a brief solution outline.
         - If a question_type is omitted, treat it as `descriptive` by default.
