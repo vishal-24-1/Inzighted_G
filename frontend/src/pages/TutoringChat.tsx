@@ -320,21 +320,12 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
         // If the agent provided feedback (reply), show it immediately
         const itemsToAppend: Message[] = [];
 
-        // Get current question number context for feedback
-        const currentQuestionNumber = response.data.next_question?.question_number 
-          ? response.data.next_question.question_number - 1 
-          : response.data.feedback?.question_number;
-        const totalQuestions = response.data.next_question?.total_questions || response.data.feedback?.total_questions;
-
         if (response.data.feedback && response.data.feedback.text) {
           const feedbackMessage: Message = {
             id: response.data.feedback.id || (Date.now() + 2).toString(),
             text: response.data.feedback.text,
             isUser: false,
-            timestamp: new Date(),
-            // Carry over question number context to feedback
-            questionNumber: currentQuestionNumber,
-            totalQuestions: totalQuestions
+            timestamp: new Date()
           };
           itemsToAppend.push(feedbackMessage);
         }

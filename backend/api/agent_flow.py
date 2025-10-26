@@ -328,6 +328,7 @@ class TutorAgent:
                     return {
                         "reply": "Okay — moving to the next question.",
                         "next_question": next_q_text,
+                        "next_question_item": next_q_item,
                         "session_complete": False,
                         "evaluation": None
                     }
@@ -705,7 +706,7 @@ class TutorAgent:
                 # Build a language-aware summary prompt. For Tanglish, preserve existing behavior.
                 if lang == 'tanglish':
                     summary_instr = (
-                        "Convert this answer into concise Tanglish style (mix of Tamil and English). "
+                        "Convert this answer into concise Tanglish style (mix of Tamil in latin wordsand English) don't use pure tamil words or phrases. "
                         "Keep the key information but make it conversational and brief (max 30 words). "
                         "CRITICAL: You must PROVIDE the answer, not ask the user a question. "
                         "Ensure your response is complete with proper ending - do not cut off mid-sentence or leave incomplete."
