@@ -884,20 +884,25 @@ Handle {language} or English input.
     def generate_boostme_insights(self, qa_records: list, language: str = "tanglish") -> dict:
         """
         Generate BoostMe insights (3 zones) from tutoring session QA records.
-        Returns focus_zone, steady_zone, edge_zone as arrays of 2 Tanglish points each.
+        Returns focus_zone, steady_zone, edge_zone as arrays of 2 Tanglish points each,
+        plus corresponding reason arrays explaining why each zone was identified.
         
         Args:
             qa_records: List of QA dicts with question, answer, score, xp
             
         Returns:
             Dict with focus_zone, steady_zone, edge_zone (each is array of 2 strings)
+            and focus_zone_reasons, steady_zone_reasons, edge_zone_reasons (each is array of 2 strings)
         """
         import json
         
         # System prompt for BoostMe insights (dynamic language)
         system_prompt = f"""You are an insights-generator for InzightEd-G for learners. Output JSON only (no commentary).
-Language: {language}. Keep each point concise (<= 15 words).
+Language: {language}. Keep each point concise (<= 15 words). Keep each reason concise (<= 30 words).
 Produce three zones based on the student's performance. Each zone must be an array of exactly two short points (strings).
+
+IMPORTANT: For each zone, you MUST also provide a corresponding reasons array explaining WHY you identified those points.
+Each reason should reference specific questions, scores, or patterns observed in the student's performance.
 
 You will receive multiple student performance records. Each record will include:
 - Question
@@ -917,10 +922,14 @@ From all observations for each zone, internally rank every possible insight base
 
 Only output the TOP TWO strongest insights per zone after ranking.
 
+OUTPUT FORMAT (strict JSON):
 {{
   "focus_zone": ["point1", "point2"],
+  "focus_zone_reasons": ["reason for point1 - mention specific questions/patterns", "reason for point2"],
   "steady_zone": ["point1", "point2"],
-  "edge_zone": ["point1", "point2"]
+  "steady_zone_reasons": ["reason for point1 - cite specific correct answers", "reason for point2"],
+  "edge_zone": ["point1", "point2"],
+  "edge_zone_reasons": ["reason for point1 - reference near-correct attempts", "reason for point2"]
 }}
 
 ZONE DEFINITIONS & LOGIC
@@ -930,13 +939,15 @@ ZONE DEFINITIONS & LOGIC
     - Highlight the root cause (concept gap, recall issue, or misread question).  
     - Mention what needs to improve, not just that it’s “wrong.”  
     - Avoid generic words like “mistake,” “confused,” or “wrong.”  
-    - Output should point to *specific learning gap* mention the specific concept in a deeper sense or topic.  
+    - Output should point to *specific learning gap* mention the specific concept in a deeper sense or topic.
+    - Reasons must cite specific questions (e.g., "Question 2 and 5 showed confusion with X concept")
  
 2. steady_zone → Strong / Confident Understanding  
     - Identify areas where the student showed consistent accuracy or strong reasoning.  
     - Highlight what they’re doing well — correct logic, structured solving, or recall clarity.  
     - Encourage retention of these skills.  
-    - Avoid generic praise; focus on *specific strengths* mentioned the specific concept in a deeper sense or topic.  
+    - Avoid generic praise; focus on *specific strengths* mentioned the specific concept in a deeper sense or topic.
+    - Reasons must cite specific questions where they excelled (e.g., "Correctly solved questions 1, 3, 7 with clear reasoning")
  
 3. edge_zone → Growth Potential / Near-Mastery  
     - Identify areas where the student was almost correct or partially right.  
@@ -944,7 +955,10 @@ ZONE DEFINITIONS & LOGIC
     - Show how a small fix leads to full mastery.  
     - Tone should be positive and motivating.
     - Avoid generic phrases, be specific and mention the concept in a deeper sense or topic.
-Each point should be in {language} and <= 15 words"""
+    - Reasons must cite partial credit or near-correct patterns (e.g., "Question 4 and 6 had right approach but small calculation errors")
+    
+Each point should be in {language} and <= 15 words.
+Each reason should be in {language} and <= 30 words."""
 
 
         
@@ -987,8 +1001,10 @@ Generate BoostMe insights in JSON:"""
                 
                 insights = json.loads(cleaned)
                 
-                # Validate structure
+                # Validate structure - now expecting reasons arrays too
                 required_keys = ['focus_zone', 'steady_zone', 'edge_zone']
+                reason_keys = ['focus_zone_reasons', 'steady_zone_reasons', 'edge_zone_reasons']
+                
                 if not all(k in insights for k in required_keys):
                     raise ValueError("Missing required zone keys")
                 
@@ -996,6 +1012,17 @@ Generate BoostMe insights in JSON:"""
                 for zone_key in required_keys:
                     if not isinstance(insights[zone_key], list) or len(insights[zone_key]) != 2:
                         raise ValueError(f"{zone_key} must be array of 2 strings")
+                
+                # Validate or generate fallback reasons if missing
+                for idx, zone_key in enumerate(required_keys):
+                    reason_key = reason_keys[idx]
+                    if reason_key not in insights or not isinstance(insights[reason_key], list) or len(insights[reason_key]) != 2:
+                        logger.warning(f"{reason_key} missing or invalid - generating fallback")
+                        # Generate simple fallback reason based on zone points
+                        insights[reason_key] = [
+                            f"Based on performance patterns in this area",
+                            f"Analysis of answer quality and consistency"
+                        ]
                 
                 logger.info("BoostMe insights generated successfully")
                 return insights
@@ -1023,13 +1050,16 @@ Generate BoostMe insights in JSON:"""
             qa_records: List of QA dicts with question, answer, score, xp
             
         Returns:
-            Dict with focus_zone, steady_zone, edge_zone arrays
+            Dict with focus_zone, steady_zone, edge_zone arrays plus corresponding reasons
         """
         if not qa_records:
             return {
                 "focus_zone": ["Session data unavailable", "Try answering more questions"],
+                "focus_zone_reasons": ["Not enough data to analyze", "Complete more questions for insights"],
                 "steady_zone": ["Session participation good", "Keep learning regularly"],
-                "edge_zone": ["Practice consistency venum", "More topics explore pannunga"]
+                "steady_zone_reasons": ["You engaged with the session", "Consistent practice helps"],
+                "edge_zone": ["Practice consistency venum", "More topics explore pannunga"],
+                "edge_zone_reasons": ["Regular practice builds skill", "Diverse topics expand knowledge"]
             }
         
         # Calculate simple statistics
@@ -1045,10 +1075,18 @@ Generate BoostMe insights in JSON:"""
                 f"Concept understanding romba nalla iruku",
                 f"{high_scores}/{total} questions correct ah answer panninga"
             ]
+            steady_zone_reasons = [
+                f"Strong performance across {high_scores} questions shows mastery",
+                f"Consistent accuracy demonstrates solid understanding"
+            ]
         else:
             steady_zone = [
                 "Session la participate panninga",
-                "努力 continuous ah maintain pannunga"
+                "Effort continuous ah maintain pannunga"
+            ]
+            steady_zone_reasons = [
+                "Active participation is a positive first step",
+                "Regular engagement builds learning momentum"
             ]
         
         if low_scores > total // 2:
@@ -1056,21 +1094,36 @@ Generate BoostMe insights in JSON:"""
                 f"Basics practice venum - {low_scores} questions weak",
                 "Core concepts marupadiyum revise pannunga"
             ]
+            focus_zone_reasons = [
+                f"{low_scores} questions scored below 50%, indicating concept gaps",
+                "Fundamental understanding needs strengthening through review"
+            ]
         else:
             focus_zone = [
                 "Some topics la confusion iruku",
                 "Difficult questions ku extra attention venum"
+            ]
+            focus_zone_reasons = [
+                "Certain areas show inconsistent performance patterns",
+                "Complex questions reveal opportunities for deeper study"
             ]
         
         edge_zone = [
             "Apply concepts to new scenarios try pannunga",
             "Practice speed improve panna vendiyathu"
         ]
+        edge_zone_reasons = [
+            "Building application skills will boost confidence",
+            "Consistent practice improves both speed and accuracy"
+        ]
         
         return {
             "focus_zone": focus_zone,
+            "focus_zone_reasons": focus_zone_reasons,
             "steady_zone": steady_zone,
-            "edge_zone": edge_zone
+            "steady_zone_reasons": steady_zone_reasons,
+            "edge_zone": edge_zone,
+            "edge_zone_reasons": edge_zone_reasons
         }
 
 # Module-level instance

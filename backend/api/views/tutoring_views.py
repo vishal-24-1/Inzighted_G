@@ -123,7 +123,23 @@ class TutoringSessionStartView(APIView):
             from ..models import ChatMessage
             question_message = ChatMessage.objects.create(session=session, user=user, content=first_question_text, is_user_message=False, response_time_ms=response_time_ms, token_count=len(first_question_text.split()))
 
-            return Response({"session_id": str(session.id), "first_question": {"id": str(question_message.id), "text": first_question_text, "created_at": question_message.created_at.isoformat()}}, status=201)
+            # Add question numbering metadata
+            first_question_data = {
+                "id": str(question_message.id),
+                "text": first_question_text,
+                "created_at": question_message.created_at.isoformat()
+            }
+            
+            # Include question position if available
+            if first_question_item:
+                try:
+                    first_question_data["question_number"] = first_question_item.order + 1
+                    if hasattr(first_question_item, 'batch') and first_question_item.batch:
+                        first_question_data["total_questions"] = first_question_item.batch.total_questions
+                except Exception:
+                    pass  # Fail gracefully if metadata unavailable
+
+            return Response({"session_id": str(session.id), "first_question": first_question_data}, status=201)
         except Exception as e:
             sentry_sdk.capture_exception(e, extras={"component": "tutoring", "view": "TutoringSessionStartView", "user_id": str(request.user.id) if request.user else None, "document_id": document_id})
             return Response({"error": f"Failed to start tutoring session: {str(e)}"}, status=500)
@@ -190,7 +206,23 @@ class TutoringSessionAnswerView(APIView):
             if result.get('next_question'):
                 from ..models import ChatMessage
                 next_q_msg = ChatMessage.objects.create(session=session, user=user, content=result['next_question'], is_user_message=False)
-                response_data["next_question"] = {"id": str(next_q_msg.id), "text": result['next_question'], "created_at": next_q_msg.created_at.isoformat()}
+                next_question_data = {
+                    "id": str(next_q_msg.id),
+                    "text": result['next_question'],
+                    "created_at": next_q_msg.created_at.isoformat()
+                }
+                
+                # Add question numbering if available
+                next_q_item = result.get('next_question_item')
+                if next_q_item:
+                    try:
+                        next_question_data["question_number"] = next_q_item.order + 1
+                        if hasattr(next_q_item, 'batch') and next_q_item.batch:
+                            next_question_data["total_questions"] = next_q_item.batch.total_questions
+                    except Exception:
+                        pass  # Fail gracefully
+                
+                response_data["next_question"] = next_question_data
 
             if result.get('evaluation'):
                 eval_result = result['evaluation']
@@ -262,6 +294,26 @@ class TutoringSessionDetailView(APIView):
             data['session_expired'] = is_session_expired(session)
             data['timeout_mins'] = getattr(settings, 'SESSION_TIMEOUT_MINS', 15)
             
+            # Enrich messages with question numbers for tutoring sessions
+            try:
+                batch = session.question_batch
+                if batch and batch.questions:
+                    total_questions = len(batch.questions)
+                    # Get QuestionItems to map their order
+                    question_items = session.question_items.order_by('order').all()
+                    question_map = {item.question_text: item.order + 1 for item in question_items}
+                    
+                    # Enrich each bot message with question_number if it matches a question
+                    for msg in data.get('messages', []):
+                        if not msg.get('is_user_message'):
+                            # Try to find matching question
+                            content = msg.get('content', '')
+                            if content in question_map:
+                                msg['question_number'] = question_map[content]
+                                msg['total_questions'] = total_questions
+            except Exception as e:
+                logger.warning(f"Could not enrich messages with question numbers: {e}")
+            
             return Response(data)
         except ChatSession.DoesNotExist:
             return Response({"error": "Tutoring session not found"}, status=404)
@@ -305,8 +357,11 @@ class SessionInsightsView(APIView):
                 "status": insight.status,
                 "insights": {
                     "focus_zone": insight.focus_zone if insight.focus_zone else [],
+                    "focus_zone_reasons": insight.focus_zone_reasons if hasattr(insight, 'focus_zone_reasons') and insight.focus_zone_reasons else [],
                     "steady_zone": insight.steady_zone if insight.steady_zone else [],
+                    "steady_zone_reasons": insight.steady_zone_reasons if hasattr(insight, 'steady_zone_reasons') and insight.steady_zone_reasons else [],
                     "edge_zone": insight.edge_zone if insight.edge_zone else [],
+                    "edge_zone_reasons": insight.edge_zone_reasons if hasattr(insight, 'edge_zone_reasons') and insight.edge_zone_reasons else [],
                     "xp_points": insight.xp_points,
                     "accuracy": insight.accuracy
                 },

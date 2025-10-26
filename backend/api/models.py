@@ -171,8 +171,11 @@ class SessionInsight(models.Model):
     
     # BoostMe Insights Fields (3 Zones)
     focus_zone = models.JSONField(null=True, blank=True, help_text="Array of 2 Tanglish points - low understanding/weak areas")
+    focus_zone_reasons = models.JSONField(null=True, blank=True, help_text="Array of 2 reasons explaining why focus_zone was identified")
     steady_zone = models.JSONField(null=True, blank=True, help_text="Array of 2 Tanglish points - high clarity/strong areas")
+    steady_zone_reasons = models.JSONField(null=True, blank=True, help_text="Array of 2 reasons explaining why steady_zone was identified")
     edge_zone = models.JSONField(null=True, blank=True, help_text="Array of 2 Tanglish points - potential improvement/growth areas")
+    edge_zone_reasons = models.JSONField(null=True, blank=True, help_text="Array of 2 reasons explaining why edge_zone was identified")
     
     # Performance Metrics
     xp_points = models.IntegerField(default=0, help_text="Total XP earned (1 XP per answered question)")

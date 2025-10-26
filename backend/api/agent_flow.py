@@ -925,8 +925,11 @@ class TutorAgent:
                     "document": self.session.document,
                     # BoostMe fields
                     "focus_zone": boostme_insights.get('focus_zone', []),
+                    "focus_zone_reasons": boostme_insights.get('focus_zone_reasons', []),
                     "steady_zone": boostme_insights.get('steady_zone', []),
+                    "steady_zone_reasons": boostme_insights.get('steady_zone_reasons', []),
                     "edge_zone": boostme_insights.get('edge_zone', []),
+                    "edge_zone_reasons": boostme_insights.get('edge_zone_reasons', []),
                     "xp_points": xp_points,
                     "accuracy": accuracy,
                     # Legacy SWOT fields (empty for backward compatibility)
