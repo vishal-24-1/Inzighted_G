@@ -68,22 +68,6 @@ const BoostMe: React.FC = () => {
     loadSessions();
   }, []);
 
-  // Close popover when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
-      if (activeInfoPopover) {
-        const target = event.target as HTMLElement;
-        // Check if click is outside popover and info button
-        if (!target.closest('.info-popover') && !target.closest('.info-button')) {
-          setActiveInfoPopover(null);
-        }
-      }
-    };
-
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [activeInfoPopover]);
-
   const handleGoHome = () => {
     navigate('/');
   };
@@ -208,11 +192,13 @@ const BoostMe: React.FC = () => {
   };
 
   // Simple circular progress component (value: 0-100)
-  const CircleProgress: React.FC<{ value: number; size?: number; strokeWidth?: number; color?: string }> = ({ value, size = 84, strokeWidth = 8, color = '#10B981' }) => {
+  const CircleProgress: React.FC<{ value: number; size?: number; strokeWidth?: number; color?: string; showPercent?: boolean }> = ({ value, size = 84, strokeWidth = 8, color = '#10B981', showPercent = true }) => {
     const capped = Math.max(0, Math.min(100, Number(value) || 0));
     const radius = (size - strokeWidth) / 2;
     const circumference = 2 * Math.PI * radius;
     const offset = circumference * (1 - capped / 100);
+
+    const textSize = Math.max(12, Math.floor(size / 5));
 
     return (
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
@@ -232,53 +218,41 @@ const BoostMe: React.FC = () => {
             strokeDasharray={`${circumference} ${circumference}`}
             strokeDashoffset={offset}
             transform="rotate(-90)"
+            style={{ transition: 'stroke-dashoffset 900ms cubic-bezier(.2,.9,.3,1)', filter: 'drop-shadow(0 4px 10px rgba(6,182,212,0.06))' }}
           />
-          <text x="0" y="4" textAnchor="middle" fontSize={14} fontWeight={600} fill="#0F172A">
-            {capped.toFixed(0)}%
+          <text x="0" y="4" textAnchor="middle" fontSize={textSize} fontWeight={600} fill="#0F172A">
+            {showPercent ? `${capped.toFixed(0)}%` : `${capped.toFixed(0)}`}
           </text>
         </g>
       </svg>
     );
   };
 
-  // Simple horizontal progress bar (value: 0-100)
-  const BarProgress: React.FC<{ value: number; height?: number; color?: string }> = ({ value, height = 12, color = '#10B981' }) => {
-    const capped = Math.max(0, Math.min(100, Number(value) || 0));
+  // Simple static circle used to display numeric stats (e.g. XP) without a progress ring
+  const StatCircle: React.FC<{ label?: React.ReactNode; size?: number; borderColor?: string; value?: number | string }> = ({ label, size = 84, borderColor = '#E6E6E6', value }) => {
+    const fontSize = Math.max(12, Math.floor(size / 5.5));
+    const ringSize = size;
+    const innerSize = Math.max(44, Math.floor(size - 14));
+
     return (
-      <div className="w-full mt-3">
-        <div className="w-full bg-gray-200 rounded-full overflow-hidden" style={{ height }} role="progressbar" aria-valuenow={capped} aria-valuemin={0} aria-valuemax={100}>
-          <div style={{ width: `${capped}%`, height: '100%', backgroundColor: color }} />
+      <div style={{ width: ringSize, height: ringSize }} className="flex items-center justify-center">
+        {/* outer gradient ring */}
+        <div
+          className="rounded-full flex items-center justify-center transition-transform transform hover:scale-105"
+          style={{
+            width: ringSize,
+            height: ringSize,
+            padding: 6,
+            background: 'linear-gradient(135deg, rgba(59,130,246,0.12), rgba(236,72,153,0.10))',
+            borderRadius: 9999
+          }}
+        >
+          <div style={{ width: innerSize, height: innerSize, borderRadius: 9999, background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 6px 14px rgba(15,23,42,0.04)' }}>
+            <div style={{ fontSize }} className="font-semibold text-gray-900">{value ?? label}</div>
+          </div>
         </div>
-        <div className="text-xs text-gray-700 mt-1 text-start">{capped.toFixed(0)}%</div>
       </div>
     );
-  };
-
-  // Touch/swipe handling
-  const minSwipeDistance = 50;
-
-  const onTouchStart = (e: React.TouchEvent) => {
-    setTouchEnd(null);
-    setTouchStart(e.targetTouches[0].clientX);
-  };
-
-  const onTouchMove = (e: React.TouchEvent) => {
-    setTouchEnd(e.targetTouches[0].clientX);
-  };
-
-  const onTouchEnd = () => {
-    if (!touchStart || !touchEnd) return;
-
-    const distance = touchStart - touchEnd;
-    const isLeftSwipe = distance > minSwipeDistance;
-    const isRightSwipe = distance < -minSwipeDistance;
-
-    if (isLeftSwipe && currentCardIndex < cardCount - 1) {
-      setCurrentCardIndex(currentCardIndex + 1);
-    }
-    if (isRightSwipe && currentCardIndex > 0) {
-      setCurrentCardIndex(currentCardIndex - 1);
-    }
   };
 
 
@@ -310,8 +284,6 @@ const BoostMe: React.FC = () => {
     }
   ] : [];
 
-  // Guard to avoid division by zero when computing carousel widths
-  const cardCount = Math.max(boostMeCards.length, 1);
 
   // Convert hex color to rgba string (supports 3- or 6-digit hex). Falls back to a neutral gray.
   const hexToRgba = (hex?: string, alpha = 1) => {
@@ -325,11 +297,20 @@ const BoostMe: React.FC = () => {
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   };
 
+  // Small helper to turn accuracy into a short human label
+  const accuracyLabel = (value?: number) => {
+    const v = Math.max(0, Math.min(100, Number(value) || 0));
+    if (v >= 85) return 'Excellent';
+    if (v >= 65) return 'Good';
+    if (v >= 40) return 'Getting there';
+    return 'Needs work';
+  };
+
   return (
     <div className="w-full min-h-screen bg-white text-gray-900 px-2 pt-2 pb-24 flex flex-col overflow-x-hidden">
-      <header className="sticky top-0 w-full max-w-md flex items-center justify-between mb-4 md:ml-64 md:max-w-none md:border-b md:border-gray-200 md:pb-3 z-[45] bg-white">
+      <header className="sticky top-0 w-full flex items-center justify-between mb-4 z-[45] bg-white px-2 py-2">
         <button
-          className={`md:hidden w-10 h-10 flex items-center justify-center rounded-full text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 ${sidebarOpen ? '' : 'z-[55]'}`}
+          className={`md:hidden w-10 h-10 flex items-center justify-center rounded-full border text-gray-700 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 ${sidebarOpen ? '' : 'z-[55]'}`}
           aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
           aria-expanded={sidebarOpen}
           onClick={() => setSidebarOpen(true)}
@@ -367,22 +348,6 @@ const BoostMe: React.FC = () => {
         }}
       />
 
-      {/* Static desktop sidebar (visible on md+) */}
-      <div className="hidden md:block md:flex-shrink-0">
-        <Sidebar
-          isOpen={true}
-          inlineOnDesktop={true}
-          onClose={() => { }}
-          onProfileClick={() => setShowProfilePopup(true)}
-          sessions={sessions.map(s => ({ id: s.id, document_name: s.document_name, updated_at: s.updated_at, message_count: s.message_count }))}
-          selectedSessionId={selectedSession?.id ?? null}
-          onSessionSelect={(sessionId: string) => {
-            const session = sessions.find(s => s.id === sessionId);
-            if (session) handleSessionSelect(session);
-          }}
-        />
-      </div>
-
       {/* User Profile Popup (ensure it appears above the sidebar/backdrop) */}
       {showProfilePopup && (
         <div className="fixed inset-0 z-40 flex items-center justify-center">
@@ -390,38 +355,45 @@ const BoostMe: React.FC = () => {
         </div>
       )}
 
-      <main className="w-full max-w-md px-3 md:ml-72 mx-auto ">
-        {/* Accuracy & XP container */}
+      <main className="w-full px-3 mx-auto">
+        {/* Two-stat compact layout — enhanced, filled and mobile-first */}
         {insights && (
-          <>
-            <div className="flex flex-col justify-center mt-4 mb-6 bg-gray-100 rounded-xl p-4 shadow-sm">
-              <div className="w-full flex items-center justify-between mb-3">
-                <div className="text-left">
-                  <h3 className="font-bold">Accuracy & XP Points</h3>
+          <div className="w-full mt-4 mb-6">
+            <div className="w-full rounded-2xl bg-gradient-to-br from-white to-slate-50 p-3 shadow-md border border-gray-100">
+              <div className="flex items-center justify-between gap-3">
+                {/* Accuracy column */}
+                <div className="flex-1 flex flex-col items-center text-center">
+                  <div className="relative">
+                    <div className="absolute inset-0 rounded-full -z-10" style={{ boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.6)' }} />
+                    <div className="rounded-full p-1 bg-white">
+                      <CircleProgress value={insights.insights.accuracy ?? 0} size={88} strokeWidth={6} color="#06b6d4" />
+                    </div>
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-gray-800">Accuracy</div>
                 </div>
-                <div
-                  aria-hidden={false}
-                  title={`${insights.insights.xp_points ?? 0} XP points`}
-                >
-                  <div className="bg-blue-500 text-white text-xs font-semibold rounded-full px-2 py-1 shadow-md flex items-center gap-1">
-                    <Award size={14} className="text-white" />
-                    <span>{insights.insights.xp_points ?? 0} XP</span>
+
+                {/* vertical divider for visual weight on larger phones */}
+                <div className="hidden sm:block w-px h-16 bg-gray-200 mx-2" />
+
+                {/* XP column */}
+                <div className="flex-1 flex flex-col items-center text-center">
+                  <div className="relative">
+                    <div className="absolute -inset-1 rounded-full -z-10" style={{ background: 'linear-gradient(135deg, rgba(59,130,246,0.06), rgba(236,72,153,0.04))' }} />
+                    <div className="rounded-full p-1 bg-white">
+                      <StatCircle size={88} borderColor="#E6E6E6" value={insights.insights.xp_points ?? 0} />
+                    </div>
+                  </div>
+                  <div className="mt-2 text-sm font-semibold text-gray-800 flex items-center gap-2">
+                    <span>XP</span>
                   </div>
                 </div>
               </div>
 
-              <div className="flex items-center justify-center w-full">
-                {/* Horizontal progress bar centered inside the container */}
-                <BarProgress value={insights.insights.accuracy ?? 0} height={12} color="#10B981" />
-              </div>
+              {/* subtle footer text */}
+              <div className="mt-3 text-center text-xs text-gray-400">Note: Accuracy and the XP shown here are for each test</div>
             </div>
-          </>
+          </div>
         )}
-
-        <div className="text-sm mb-3 flex bg-gray-700 text-white w-fit items-center px-3 py-1 rounded-full gap-1">
-          AI Generated Tips
-          <Sparkles size={10} className="text-white ml-1" />
-        </div>
 
 
         {/* Loading */}
@@ -433,54 +405,19 @@ const BoostMe: React.FC = () => {
         ) : insights ? (
           <div>
             {/* Zone Cards (stacked vertically) */}
-            <div className="w-full space-y-4">
+            <div className="w-full space-y-4 mb-16">
               {boostMeCards.map((card, index) => (
-                <div key={index} className="rounded-xl p-2 relative" style={{ backgroundImage: `linear-gradient(135deg, ${hexToRgba(card.color, 0.18)}, ${hexToRgba(card.color, 0.36)})` }}>
+                <div key={index} className="rounded-2xl shadow-md p-2 relative" style={{ backgroundImage: `linear-gradient(135deg, ${hexToRgba(card.color, 0.18)}, ${hexToRgba(card.color, 0.36)})` }}>
                   <div className="flex items-center justify-between mb-2 pl-2 pt-2">
                     <div>
                       <h3 className="text-lg font-semibold text-gray-800">{card.type}</h3>
                       <p className="text-xs text-gray-500">{card.description}</p>
                     </div>
-                    {/* Info button */}
-                    {card.reasons && card.reasons.length > 0 && (
-                      <button
-                        onClick={() => setActiveInfoPopover(activeInfoPopover === card.type ? null : card.type)}
-                        className="info-button w-8 h-8 flex items-center justify-center rounded-full bg-white hover:bg-gray-50 shadow-sm transition-all focus:outline-none focus:ring-2 focus:ring-blue-300"
-                        aria-label={`Show reasons for ${card.type}`}
-                        title={`Why this insight?`}
-                      >
-                        <Info size={16} className="text-gray-700" />
-                      </button>
-                    )}
+                    {/* (Info moved) */}
                   </div>
-                  
-                  {/* Popover for reasons */}
-                  {activeInfoPopover === card.type && card.reasons && card.reasons.length > 0 && (
-                    <div className="info-popover absolute top-full right-2 mt-2 w-80 max-w-[calc(100vw-2rem)] bg-white rounded-lg shadow-xl border border-gray-200 p-4 z-50 animate-fadeIn">
-                      <div className="flex items-start justify-between mb-2">
-                        <h4 className="text-sm font-semibold text-gray-800">Why this insight?</h4>
-                        <button
-                          onClick={() => setActiveInfoPopover(null)}
-                          className="text-gray-400 hover:text-gray-600 focus:outline-none"
-                          aria-label="Close"
-                        >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                          </svg>
-                        </button>
-                      </div>
-                      <ul className="space-y-2 text-xs text-gray-600">
-                        {card.reasons.map((reason, idx) => (
-                          <li key={idx} className="flex items-start gap-2">
-                            <span className="text-blue-500 mt-0.5">•</span>
-                            <span>{reason}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                  
-                  <div className="text-sm text-gray-700 text-left bg-white rounded-lg px-2 py-4">
+
+                  {/* White content area (make relative so popover/link can be positioned inside) */}
+                  <div className="text-sm text-gray-700 text-left bg-white rounded-lg px-2 pt-4 pb-6 relative">
                     {Array.isArray(card.content) && card.content.length > 0 ? (
                       <ul className="list-disc pl-5 space-y-2">
                         {card.content.map((item, idx) => (
@@ -490,12 +427,23 @@ const BoostMe: React.FC = () => {
                     ) : (
                       <p className="text-gray-500 italic">No insights available</p>
                     )}
+
+                    {/* Learn why link placed at the bottom-right inside the white content area */}
+                    {card.reasons && card.reasons.length > 0 && (
+                      <div className="absolute bottom-1 right-3">
+                        <button
+                          onClick={() => setActiveInfoPopover(activeInfoPopover === card.type ? null : card.type)}
+                          className="learn-why-link text-xs text-gray-500 underline decoration-dashed decoration-1 decoration-gray-400 underline-offset-2 hover:decoration-gray-500 focus:outline-none"
+                          aria-label={`Learn why for ${card.type}`}
+                        >
+                          Learn why
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
             </div>
-
-            <div className="text-xs text-gray-500 mt-1 text-center">Scroll to explore insights</div>
 
           </div>
         ) : selectedSession ? (
@@ -510,6 +458,39 @@ const BoostMe: React.FC = () => {
           </div>
         )}
       </main>
+
+      {/* Modal for reasons */}
+      {activeInfoPopover && (() => {
+        const card = boostMeCards.find(c => c.type === activeInfoPopover);
+        if (!card || !card.reasons || card.reasons.length === 0) return null;
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={() => setActiveInfoPopover(null)}>
+            <div className="info-popover bg-white rounded-2xl shadow-xl border border-gray-200 p-4 w-full mx-4 animate-fadeIn max-h-[90vh] overflow-y-auto" style={{ maxWidth: 'calc(100vw - 2rem)' }} onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-start justify-between mb-2">
+                <h4 className="text-md font-semibold text-gray-800">Why this insight?</h4>
+                <button
+                  onClick={() => setActiveInfoPopover(null)}
+                  className="text-gray-400 hover:text-gray-600 focus:outline-none"
+                  aria-label="Close"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+              <ul className="space-y-2 text-sm text-gray-600">
+                {card.reasons.map((reason, idx) => (
+                  <li key={idx} className="flex items-start gap-2">
+                    <span className="text-blue-500 mt-0.5">•</span>
+                    <span>{reason}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* Mobile dock navigation */}
       {/* Floating plus button above the mobile dock (mobile-only) */}
       <div className="md:hidden fixed right-6 bottom-24 z-40">
