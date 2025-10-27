@@ -51,13 +51,21 @@ class GeminiLLMClient:
             sentry_sdk.capture_exception(e)
             self.api_key = None
     
-    def generate_response(self, prompt: str, max_tokens: int = 1000, max_words: int | None = None) -> str:
+    def generate_response(self, prompt: str, max_tokens: int = 1000, max_words: int | None = None, model: str = "gemini-2.0-flash-exp", request_timeout: int = 30) -> str:
         """
-        Generate response using Gemini 2.0 Flash model via direct HTTP API
+        Generate response using Gemini model via direct HTTP API
+        
+        Implements robust error handling with:
+        - 3 retry attempts for server errors (502, 503)
+        - Exponential backoff for transient failures
+        - Automatic fallback to gemini-2.0-flash-exp when gemini-2.5-flash is overloaded
+        - Key rotation and blacklisting for auth/quota errors
         
         Args:
             prompt: The prompt to send to the model
             max_tokens: Maximum tokens in response
+            max_words: Optional word limit for response truncation
+            model: Gemini model to use (default: gemini-2.0-flash-exp)
             
         Returns:
             Generated response text or error message
@@ -66,7 +74,7 @@ class GeminiLLMClient:
             return "Error: Gemini client not initialized. Please check your LLM_API_KEY."
         
         try:
-            url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
             headers = {'Content-Type': 'application/json'}
 
             data = {
@@ -91,10 +99,13 @@ class GeminiLLMClient:
                 tried_keys.append(current_key)
                 params = {'key': current_key}
 
-                # Try a small retry loop per key for transient errors
-                for attempt in range(2):
+                # Try a retry loop per key for transient errors (increased to 3 for server errors)
+                max_retries = 3
+                for attempt in range(max_retries):
                     try:
-                        response = requests.post(url, headers=headers, json=data, params=params, timeout=30)
+                        # Allow per-call timeout that grows slightly on retries to handle slow model responses
+                        current_timeout = min(request_timeout * (2 ** attempt), 120)
+                        response = requests.post(url, headers=headers, json=data, params=params, timeout=current_timeout)
                         response.raise_for_status()
 
                         result = response.json()
@@ -113,6 +124,30 @@ class GeminiLLMClient:
                             return out
 
                         logger.error(f"Gemini response could not be parsed into text. Raw response: {json.dumps(result, indent=2)}")
+                        
+                        # Check if this was a MAX_TOKENS issue
+                        finish_reason = None
+                        if 'candidates' in result and len(result['candidates']) > 0:
+                            finish_reason = result['candidates'][0].get('finishReason')
+                        
+                        if finish_reason == "MAX_TOKENS":
+                            logger.warning(f"Model {model} hit MAX_TOKENS limit, retrying with more tokens or fallback model")
+                            # If using gemini-2.5-flash and hit token limit, try fallback
+                            if model == "gemini-2.5-flash":
+                                logger.info("Attempting fallback to gemini-2.0-flash-exp for token limit issue")
+                                # Create a compact, tutor-style fallback prompt to improve output quality from the flash model.
+                                fallback_instructions = (
+                                    "FALLBACK_MODE: You are an experienced tutor. The primary model could not finish its reasoning"
+                                    " so produce a concise, actionable JSON insights object using the input below."
+                                    " Output ONLY valid JSON matching the required schema. If you must shorten, keep the same keys and provide best-effort values."
+                                    "\nExample output schema:\n{\n  \"focus_zone\": [\"point1\", \"point2\"],\n  \"focus_zone_reasons\": [\"reason1\", \"reason2\"],\n  \"steady_zone\": [\"point1\", \"point2\"],\n  \"steady_zone_reasons\": [\"reason1\", \"reason2\"],\n  \"edge_zone\": [\"point1\", \"point2\"],\n  \"edge_zone_reasons\": [\"reason1\", \"reason2\"],\n}\n\n"
+                                )
+                                fallback_prompt = fallback_instructions + prompt
+                                fallback_response = self.generate_response(fallback_prompt, max_tokens * 2, max_words, model="gemini-2.0-flash-exp")
+                                if not fallback_response.startswith("Error:"):
+                                    logger.info("✅ Fallback to gemini-2.0-flash-exp successful (with fallback instructions)")
+                                    return fallback_response
+                        
                         return "Error: Received empty or filtered response from the AI model."
 
                     except requests.exceptions.HTTPError as e:
@@ -126,7 +161,8 @@ class GeminiLLMClient:
                             "status_code": status,
                             "response_body": body[:500],  # First 500 chars
                             "key_attempt": key_attempt,
-                            "attempt": attempt
+                            "attempt": attempt,
+                            "model": model
                         })
 
                         # If key is invalid or quota, blacklist this key and try next
@@ -136,15 +172,54 @@ class GeminiLLMClient:
                             self.key_manager.mark_key_failed(current_key, cooldown_seconds=60)
                             break  # break out of retry loop for this key and try next key
 
-                        # transient server errors - maybe retry
-                        if status in (502, 503) and attempt == 0:
+                        # Transient server errors (502, 503) - retry with exponential backoff
+                        if status in (502, 503) and attempt < max_retries - 1:
                             wait_time = (2 ** attempt) + random.uniform(0, 1)
-                            logger.warning(f"Gemini API {status} error, retrying in {wait_time:.1f}s (attempt {attempt + 1}/2)")
+                            logger.warning(f"Gemini API {status} error with model {model}, retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})")
                             time.sleep(wait_time)
                             continue
 
+                        # If all retries exhausted for 503 and using gemini-2.5-flash, try fallback
+                        if status == 503 and model == "gemini-2.5-flash" and attempt == max_retries - 1:
+                            logger.warning(f"Model {model} overloaded after {max_retries} attempts, attempting fallback to gemini-2.0-flash-exp")
+                            # Try fallback model recursively (only once to avoid infinite loop)
+                            fallback_instructions = (
+                                "FALLBACK_MODE: You are an experienced tutor. The primary model was overloaded"
+                                " so produce a concise, actionable JSON insights object using the input below."
+                                " Output ONLY valid JSON matching the required schema. If you must shorten, keep the same keys and provide best-effort values.\n\n"
+                            )
+                            fallback_prompt = fallback_instructions + prompt
+                            fallback_response = self.generate_response(fallback_prompt, max_tokens, max_words, model="gemini-2.0-flash-exp")
+                            if not fallback_response.startswith("Error:"):
+                                logger.info("✅ Fallback to gemini-2.0-flash-exp successful (with fallback instructions)")
+                                return fallback_response
+                            logger.error("Fallback model also failed")
+
                         logger.error(f"HTTP error calling Gemini API: {status} - {body}")
                         return f"Error: API request failed with status {status}"
+
+                    except requests.exceptions.ReadTimeout as e:
+                        # Specific handling for read timeouts - these are common when model is slow
+                        sentry_sdk.capture_exception(e, extras={
+                            "component": "gemini_client",
+                            "method": "generate_response",
+                            "error": "ReadTimeout",
+                            "key_attempt": key_attempt,
+                            "attempt": attempt,
+                            "model": model,
+                            "timeout_seconds": current_timeout
+                        })
+
+                        if attempt < max_retries - 1:
+                            wait_time = (2 ** attempt) + random.uniform(0, 1)
+                            logger.warning(f"Read timeout after {current_timeout}s, retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})")
+                            time.sleep(wait_time)
+                            continue
+                        else:
+                            logger.error(f"Read timeout calling Gemini API after {max_retries} attempts: {e}")
+                            # mark key as possibly problematic and try next key
+                            self.key_manager.mark_key_failed(current_key, cooldown_seconds=30)
+                            break
 
                     except requests.exceptions.RequestException as e:
                         # Capture request exceptions
@@ -152,12 +227,13 @@ class GeminiLLMClient:
                             "component": "gemini_client",
                             "method": "generate_response",
                             "key_attempt": key_attempt,
-                            "attempt": attempt
+                            "attempt": attempt,
+                            "model": model
                         })
                         
-                        if attempt == 0:
+                        if attempt < max_retries - 1:
                             wait_time = (2 ** attempt) + random.uniform(0, 1)
-                            logger.warning(f"Request error, retrying in {wait_time:.1f}s (attempt {attempt + 1}/2): {e}")
+                            logger.warning(f"Request error, retrying in {wait_time:.1f}s (attempt {attempt + 1}/{max_retries}): {e}")
                             time.sleep(wait_time)
                             continue
                         else:
@@ -612,9 +688,12 @@ Handle {language} or English input.
         Generate structured questions using exact system prompt from spec.
         Returns list of question dictionaries with archetype, difficulty, etc.
         
+        Implements retry logic with exponential backoff for transient failures.
+        
         Args:
             context: Document context to generate questions from
             total_questions: Number of questions to generate
+            language: Language for questions (default: tanglish)
             
         Returns:
             List of question dicts matching spec format
@@ -622,91 +701,135 @@ Handle {language} or English input.
         from .tanglish_prompts import build_question_generation_prompt
         import json
         
-        try:
-            # Build prompt with context and language
-            prompt = build_question_generation_prompt(context, total_questions, language)
-            
-            # Call Gemini
-            logger.info(f"Generating {total_questions} structured questions...")
-            response = self.generate_response(prompt, max_tokens=3000)
-            
-            if response.startswith("Error:"):
-                raise ValueError(f"LLM error: {response}")
-            
-            # Parse JSON response
+        max_retries = 3
+        last_error = None
+        
+        for retry_attempt in range(max_retries):
             try:
-                # Clean response
-                cleaned = response.strip()
-                if cleaned.startswith('```json'):
-                    cleaned = cleaned[7:]
-                if cleaned.endswith('```'):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
+                # Build prompt with context and language
+                prompt = build_question_generation_prompt(context, total_questions, language)
                 
-                questions = json.loads(cleaned)
-
-                if not isinstance(questions, list):
-                    raise ValueError("Response is not a JSON array")
-
-                # Normalize elements: handle cases where LLM returns arrays-of-arrays or stringified objects
-                normalized = []
-                for q in questions:
-                    # If element is a dict, keep
-                    if isinstance(q, dict):
-                        normalized.append(q)
+                # Call Gemini
+                if retry_attempt > 0:
+                    logger.info(f"Generating {total_questions} structured questions (retry {retry_attempt}/{max_retries})...")
+                else:
+                    logger.info(f"Generating {total_questions} structured questions...")
+                    
+                response = self.generate_response(prompt, max_tokens=3000)
+                
+                if response.startswith("Error:"):
+                    last_error = f"LLM error: {response}"
+                    logger.warning(f"Question generation failed on attempt {retry_attempt + 1}: {last_error}")
+                    
+                    # Wait before retry with exponential backoff
+                    if retry_attempt < max_retries - 1:
+                        wait_time = (2 ** retry_attempt) + random.uniform(0, 1)
+                        logger.info(f"Retrying question generation in {wait_time:.1f}s...")
+                        time.sleep(wait_time)
                         continue
+                    else:
+                        raise ValueError(last_error)
+                
+                # Parse JSON response
+                try:
+                    # Clean response
+                    cleaned = response.strip()
+                    if cleaned.startswith('```json'):
+                        cleaned = cleaned[7:]
+                    if cleaned.endswith('```'):
+                        cleaned = cleaned[:-3]
+                    cleaned = cleaned.strip()
+                    
+                    questions = json.loads(cleaned)
 
-                    # If element is a list whose first item is a dict, use the first dict
-                    if isinstance(q, list) and q and isinstance(q[0], dict):
-                        normalized.append(q[0])
+                    if not isinstance(questions, list):
+                        raise ValueError("Response is not a JSON array")
+
+                    # Normalize elements: handle cases where LLM returns arrays-of-arrays or stringified objects
+                    normalized = []
+                    for q in questions:
+                        # If element is a dict, keep
+                        if isinstance(q, dict):
+                            normalized.append(q)
+                            continue
+
+                        # If element is a list whose first item is a dict, use the first dict
+                        if isinstance(q, list) and q and isinstance(q[0], dict):
+                            normalized.append(q[0])
+                            continue
+
+                        # If element is a string, try to parse it as JSON
+                        if isinstance(q, str):
+                            try:
+                                parsed = json.loads(q)
+                                if isinstance(parsed, dict):
+                                    normalized.append(parsed)
+                                    continue
+                                # If parsed is a list with dicts, take first
+                                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                                    normalized.append(parsed[0])
+                                    continue
+                            except Exception:
+                                # ignore parse errors for this element
+                                pass
+
+                        # Otherwise, skip this element (unusable shape)
+                        logger.debug(f"Skipping question element with unexpected type: {type(q)}")
+
+                    # Validate structure
+                    required_keys = ['question_id', 'archetype', 'question_text', 'difficulty', 'expected_answer']
+                    valid_questions = []
+                    for q in normalized:
+                        if all(k in q for k in required_keys):
+                            valid_questions.append(q)
+                    
+                    if len(valid_questions) < total_questions // 2:
+                        raise ValueError(f"Only got {len(valid_questions)} valid questions")
+                    
+                    logger.info(f"✅ Successfully generated {len(valid_questions)} structured questions")
+                    return valid_questions[:total_questions]
+                    
+                except (json.JSONDecodeError, ValueError) as e:
+                    last_error = str(e)
+                    logger.warning(f"Failed to parse question JSON on attempt {retry_attempt + 1}: {e}")
+                    logger.debug(f"Raw response: {response[:500]}")
+                    
+                    # Retry on parsing failure
+                    if retry_attempt < max_retries - 1:
+                        wait_time = (2 ** retry_attempt) + random.uniform(0, 1)
+                        logger.info(f"Retrying question generation in {wait_time:.1f}s...")
+                        time.sleep(wait_time)
                         continue
-
-                    # If element is a string, try to parse it as JSON
-                    if isinstance(q, str):
-                        try:
-                            parsed = json.loads(q)
-                            if isinstance(parsed, dict):
-                                normalized.append(parsed)
-                                continue
-                            # If parsed is a list with dicts, take first
-                            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-                                normalized.append(parsed[0])
-                                continue
-                        except Exception:
-                            # ignore parse errors for this element
-                            pass
-
-                    # Otherwise, skip this element (unusable shape)
-                    logger.debug(f"Skipping question element with unexpected type: {type(q)}")
-
-                # Validate structure
-                required_keys = ['question_id', 'archetype', 'question_text', 'difficulty', 'expected_answer']
-                valid_questions = []
-                for q in normalized:
-                    if all(k in q for k in required_keys):
-                        valid_questions.append(q)
+                    else:
+                        # Final attempt failed - return fallback
+                        logger.error(f"All {max_retries} attempts failed for question generation")
+                        return [{
+                            "question_id": f"q_fallback_{i}",
+                            "archetype": "Concept Unfold",
+                            "question_text": f"Question {i+1} generation failed. Please try again.",
+                            "difficulty": "medium",
+                            "expected_answer": "N/A"
+                        } for i in range(min(3, total_questions))]
+                    
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Error in generate_questions_structured attempt {retry_attempt + 1}: {e}")
                 
-                if len(valid_questions) < total_questions // 2:
-                    raise ValueError(f"Only got {len(valid_questions)} valid questions")
-                
-                logger.info(f"Successfully generated {len(valid_questions)} structured questions")
-                return valid_questions[:total_questions]
-                
-            except (json.JSONDecodeError, ValueError) as e:
-                logger.error(f"Failed to parse question JSON: {e}")
-                logger.debug(f"Raw response: {response[:500]}")
-                
-                # Fallback: return minimal structure
-                return [{
-                    "question_id": f"q_fallback_{i}",
-                    "archetype": "Concept Unfold",
-                    "question_text": f"Question {i+1} generation failed. Please try again.",
-                    "difficulty": "medium",
-                    "expected_answer": "N/A"
-                } for i in range(min(3, total_questions))]
-                
-        except Exception as e:
-            logger.error(f"Error in generate_questions_structured: {e}")
+                # Retry on general exception
+                if retry_attempt < max_retries - 1:
+                    wait_time = (2 ** retry_attempt) + random.uniform(0, 1)
+                    logger.info(f"Retrying question generation in {wait_time:.1f}s...")
+                    time.sleep(wait_time)
+                    continue
+                else:
+                    # Final attempt failed
+                    logger.error(f"All {max_retries} attempts failed for question generation: {e}")
+                    sentry_sdk.capture_exception(e, extras={
+                        "component": "gemini_client",
+                        "method": "generate_questions_structured",
+                        "retry_attempts": max_retries
+                    })
+                    return []
             sentry_sdk.capture_exception(e, extras={
                 "component": "gemini_client",
                 "method": "generate_questions_structured"
@@ -813,6 +936,7 @@ Handle {language} or English input.
     def generate_insights(self, qa_records: list) -> dict:
         """
         Generate SWOT insights from tutoring session QA records.
+        Uses gemini-2.5-flash for enhanced reasoning.
         DEPRECATED: Use generate_boostme_insights() instead.
         Kept for backward compatibility.
         
@@ -828,11 +952,10 @@ Handle {language} or English input.
         try:
             # Build insights prompt
             prompt = build_insights_prompt(qa_records, [])
-            
-            # Call Gemini
-            logger.info("Generating session insights...")
-            response = self.generate_response(prompt, max_tokens=800)
-            
+            # Call Gemini 2.5 Flash for deeper insights analysis
+            logger.info("Generating session insights using gemini-2.5-flash...")
+            response = self.generate_response(prompt, max_tokens=6000, model="gemini-2.5-flash")
+
             if response.startswith("Error:"):
                 raise ValueError(f"LLM error: {response}")
             
@@ -884,6 +1007,7 @@ Handle {language} or English input.
     def generate_boostme_insights(self, qa_records: list, language: str = "tanglish") -> dict:
         """
         Generate BoostMe insights (3 zones) from tutoring session QA records.
+        Uses gemini-2.5-flash for enhanced reasoning and deeper analysis.
         Returns focus_zone, steady_zone, edge_zone as arrays of 2 Tanglish points each,
         plus corresponding reason arrays explaining why each zone was identified.
         
@@ -981,11 +1105,11 @@ Student's Question-Answer Performance:
 {qa_summary}
 
 Generate BoostMe insights in JSON:"""
-            
-            # Call Gemini
-            logger.info("Generating BoostMe insights...")
-            response = self.generate_response(prompt, max_tokens=600)
-            
+
+            # Call Gemini 2.5 Flash for deeper insights analysis
+            logger.info("Generating BoostMe insights using gemini-2.5-flash...")
+            response = self.generate_response(prompt, max_tokens=6000, model="gemini-2.5-flash")
+
             if response.startswith("Error:"):
                 raise ValueError(f"LLM error: {response}")
             
