@@ -23,10 +23,10 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onClose }) => {
   const [currentStep, setCurrentStep] = useState<Step>('welcome');
   const [direction, setDirection] = useState(1);
 
-  const steps: { key: Step; title: string; subtitle: string }[] = [
-    { key: 'welcome', title: 'Welcome to InzightEd G!', subtitle: 'Your learning journey starts here' },
-    { key: 'features', title: 'Smart Features', subtitle: 'Everything you need to succeed' },
-    { key: 'ready', title: "You're All Set!", subtitle: 'Ready to begin learning?' },
+  const steps: { key: Step }[] = [
+    { key: 'welcome' },
+    { key: 'features' },
+    { key: 'ready' },
   ];
 
   const navigateToStep = (step: Step, dir: number) => {
@@ -67,7 +67,7 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onClose }) => {
   };
 
   const ProgressDots = () => (
-    <div className="flex justify-center space-x-2 mb-8">
+    <div className="flex justify-center space-x-2">
       {steps.map((step, index) => {
         const isActive = step.key === currentStep;
         const isCompleted = steps.findIndex(s => s.key === currentStep) > index;
@@ -138,46 +138,32 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onClose }) => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
-            className="space-y-8"
+            className="space-y-4"
           >
             <div className="text-center space-y-2">
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: "spring", delay: 0.1 }}
-                className="flex justify-center"
-              >
-                <Rocket className="h-12 w-12 text-blue-600" />
-              </motion.div>
-              <h2 className="text-2xl font-bold text-gray-900">Smart Features</h2>
-              <p className="text-gray-600">Everything you need to succeed</p>
+              <h2 className="text-2xl font-bold text-gray-900">Upload and Start</h2>
+              <p className="text-gray-600">Begin your personalized learning journey</p>
             </div>
 
             <div className="space-y-4">
               {[
                 {
                   icon: BookOpen,
-                  title: 'AI-Powered Tutoring',
-                  description: 'Personalized learning sessions that adapt to your pace',
+                  title: 'Upload Your Notes',
+                  description: 'Upload your study materials and notes to get started',
                   color: 'text-blue-600'
-                },
-                {
-                  icon: BarChart3,
-                  title: 'Progress Analytics',
-                  description: 'Track your growth with detailed insights and reports',
-                  color: 'text-blue-500'
                 },
                 {
                   icon: User,
-                  title: 'Personalized Learning',
-                  description: 'Content tailored specifically to your learning style',
-                  color: 'text-blue-400'
+                  title: 'AI Questions',
+                  description: 'The AI will ask questions based on your uploaded notes',
+                  color: 'text-blue-500'
                 },
                 {
-                  icon: Smartphone,
-                  title: 'Mobile Optimized',
-                  description: 'Learn anywhere, anytime on your mobile device',
-                  color: 'text-blue-600'
+                  icon: BarChart3,
+                  title: 'Personalized Insights',
+                  description: 'See insights on what you need to improve for better learning',
+                  color: 'text-blue-400'
                 }
               ].map((feature, index) => (
                 <motion.div
@@ -291,9 +277,6 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onClose }) => {
       )}
 
       <div className="w-full max-w-md mx-auto">
-        {/* Progress dots */}
-        <ProgressDots />
-
         {/* Step content with slide animation */}
         <div className="relative h-[500px] overflow-hidden">
           <AnimatePresence mode="wait" custom={direction}>
@@ -334,58 +317,43 @@ const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onClose }) => {
           paddingRight: '1rem'
         }}
       >
-        <div className="w-full max-w-md flex flex-col sm:flex-row items-center sm:justify-between gap-3">
-          {isLastStep ? (
-            // Show primary "Start Learning Now" action when on last step
-            <div className="w-full">
-              <motion.button
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
-                onClick={onClose}
-                className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-blue-400 text-white px-6 py-3 rounded-2xl font-semibold shadow-lg hover:shadow-xl transition-shadow"
-              >
-                <span>Start Learning Now</span>
-              </motion.button>
-            </div>
-          ) : (
-            <>
-              {/* Left group (Back + Skip) */}
-              <div className="w-full sm:w-auto flex gap-3 justify-center sm:justify-start">
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={prevStep}
-                  className={`px-5 py-3 rounded-2xl font-medium transition-all ${isFirstStep ? 'invisible' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-                    } w-full sm:w-auto`}
-                  disabled={isFirstStep}
-                >
-                  Back
-                </motion.button>
+        <div className="w-full max-w-md flex flex-col items-center gap-3 bg-white p-4 rounded-2xl shadow-lg">
+          <ProgressDots />
+          {/* Left group (Back + Skip) */}
+          <div className="w-full flex gap-3 justify-center">
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={prevStep}
+              className="px-5 py-3 rounded-2xl font-medium transition-all bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed w-full"
+              disabled={isFirstStep}
+            >
+              Back
+            </motion.button>
 
-                <motion.button
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.95 }}
-                  onClick={onClose}
-                  className="px-5 py-3 rounded-2xl font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-all w-full sm:w-auto"
-                >
-                  Skip
-                </motion.button>
-              </div>
+            <motion.button
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+              onClick={onClose}
+              className="px-5 py-3 rounded-2xl font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-400 disabled:cursor-not-allowed transition-all w-full"
+              disabled={isLastStep}
+            >
+              Skip
+            </motion.button>
+          </div>
 
-              {/* Primary action */}
-              <div className="w-full sm:w-auto">
-                <motion.button
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  onClick={nextStep}
-                  className="w-full sm:w-auto flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-blue-400 text-white px-6 py-3 rounded-2xl font-medium shadow-lg hover:shadow-xl transition-shadow"
-                >
-                  <span>Continue</span>
-                  <ArrowRight size={18} />
-                </motion.button>
-              </div>
-            </>
-          )}
+          {/* Primary action */}
+          <div className="w-full">
+            <motion.button
+              whileHover={{ scale: 1.02 }}
+              whileTap={{ scale: 0.98 }}
+              onClick={isLastStep ? onClose : nextStep}
+              className="w-full flex items-center justify-center space-x-2 bg-gradient-to-r from-blue-600 to-blue-400 text-white px-6 py-3 rounded-2xl font-semibold shadow-lg hover:shadow-xl transition-shadow"
+            >
+              <span>{isLastStep ? 'Start Learning Now' : 'Continue'}</span>
+              {!isLastStep && <ArrowRight size={18} />}
+            </motion.button>
+          </div>
         </div>
       </motion.div>
 

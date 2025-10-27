@@ -84,12 +84,12 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen = true, onClose, onProfileClic
     }
   };
 
-  if (isOpen && !inlineOnDesktop) {
+  if (!inlineOnDesktop) {
     return (
-      <div className="fixed inset-0 z-50 bg-black bg-opacity-50" onClick={onClose}>
+      <div className={`fixed inset-0 z-50 bg-black bg-opacity-50 transition-opacity duration-300 ease-in-out ${isOpen ? 'opacity-100' : 'opacity-0 pointer-events-none'}`} onClick={onClose}>
         <aside
-          className="fixed top-0 left-0 h-full w-72 max-w-full bg-white shadow-lg z-60 transform transition-transform duration-300 ease-in-out translate-x-0"
-          aria-hidden={false}
+          className={`fixed top-0 left-0 h-full w-72 max-w-full bg-white shadow-lg z-60 transform transition-transform duration-300 ease-in-out ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}
+          aria-hidden={!isOpen}
           aria-label="Sidebar navigation"
           onClick={(e) => e.stopPropagation()}
         >

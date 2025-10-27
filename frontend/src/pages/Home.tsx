@@ -5,7 +5,7 @@ import { useAuth } from '../utils/AuthContext';
 import DocumentSelector from '../components/DocumentSelector';
 import UserProfilePopup from '../components/UserProfilePopup';
 import Sidebar from '../components/Sidebar';
-import { FileText, Send, Rocket, UserRound, Mic, X, Flame } from 'lucide-react';
+import { FileText, Send, Rocket, UserRound, Mic, X } from 'lucide-react';
 import MobileDock from '../components/MobileDock';
 import UploadPromptModal from '../components/UploadPromptModal';
 import StreakModal from '../components/StreakModal';
@@ -23,7 +23,6 @@ type StreakWidgetProps = {
 
 const StreakWidget: React.FC<StreakWidgetProps> = ({ onOpen }) => {
   const [progress, setProgress] = useState<ProgressResponse | null>(null);
-  const [loading, setLoading] = useState(true);
   const [pulseAnimation, setPulseAnimation] = useState(false);
 
   useEffect(() => {
@@ -42,21 +41,10 @@ const StreakWidget: React.FC<StreakWidgetProps> = ({ onOpen }) => {
       }
 
       setProgress(newProgress);
-      setLoading(false);
     } catch (error) {
       console.error('Failed to fetch progress:', error);
-      setLoading(false);
     }
   };
-
-  if (loading) {
-    return (
-      <div className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-orange-100 to-red-100 rounded-lg animate-pulse">
-        <div className="w-5 h-5 bg-orange-300 rounded"></div>
-        <div className="w-8 h-4 bg-orange-300 rounded"></div>
-      </div>
-    );
-  }
 
   if (!progress) {
     return null;
@@ -70,17 +58,14 @@ const StreakWidget: React.FC<StreakWidgetProps> = ({ onOpen }) => {
       <button
         onClick={() => onOpen ? onOpen(progress as ProgressResponse, fetchProgress) : null}
         className={`
-          relative flex items-center gap-2 px-3 py-2 rounded-full 
-          bg-gray-100 h-10
+          relative flex items-center gap-0 pr-3 pl-2 rounded-full 
+          bg-gray-50 h-10 shadow-md
           ${pulseAnimation ? 'animate-pulse scale-105' : ''}
         `}
         title="Your learning streak"
         aria-label={`Current streak: ${streakCount} days`}
       >
-        <Flame
-          size={20}
-          className={'text-orange-500'}
-        />
+        <span className="text-orange-500 text-lg">🔥</span>
         <span className="text-lg font-bold text-gray-800">
           {streakCount}
         </span>
@@ -430,18 +415,18 @@ const Home: React.FC = () => {
         style={{
           backgroundImage: `linear-gradient(to bottom, rgba(255,255,255,0) 0%, rgba(255,255,255,1) 70%), repeating-linear-gradient(0deg, rgba(0,0,0,0.03) 0 1px, transparent 1px 28px), repeating-linear-gradient(90deg, rgba(0,0,0,0.03) 0 1px, transparent 1px 28px)`,
           backgroundSize: '100% 100%, auto, auto',
-          opacity: 0.9,
+          opacity: 1,
         }}
       />
 
-      {/* Mobile view (used for all screen sizes) */}
-      <div className="relative w-full min-h-screen text-gray-900 p-4 pb-24 flex flex-col overflow-hidden">
+      {/* Mobile view */}
+      <div className="relative w-full min-h-screen text-gray-900 pr-3 pl-4 pt-3 pb-24 flex flex-col overflow-hidden">
         <header className="relative z-20 mb-4">
           <div className="flex items-center justify-between">
             {/* Left: logo */}
             <div className="flex items-center">
               <a className="flex items-center gap-3 pointer-events-auto">
-                <img src={logo} alt="InzightEd" className="h-5 w-auto mt-1" />
+                <img src={logo} alt="InzightEd" className="h-6 w-auto mt-1" />
               </a>
             </div>
 
@@ -457,7 +442,7 @@ const Home: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowDocumentSelector(true)}
-                className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
+                className="w-10 h-10 flex items-center justify-center rounded-full shadow-md text-gray-700 bg-gray-50 hover:bg-gray-50"
                 aria-haspopup="dialog"
                 aria-label="Open Library"
               >
@@ -465,7 +450,7 @@ const Home: React.FC = () => {
               </button>
 
               <button
-                className="md:hidden w-10 h-10 flex items-center justify-center rounded-full shadow-sm text-gray-700 bg-gray-100 hover:bg-gray-50"
+                className="w-10 h-10 flex items-center justify-center rounded-full shadow-md text-gray-700 bg-gray-50 hover:bg-gray-50"
                 aria-label="Open profile"
                 onClick={handleProfileClick}
               >
@@ -479,19 +464,14 @@ const Home: React.FC = () => {
         {sidebarOpen && (
           <div className="fixed inset-0 bg-black/40 z-30" onClick={() => setSidebarOpen(false)} />
         )}
-        {/* Mobile/off-canvas sidebar: ensure it sits above the bottom chat bar (z-40) by using z-50 */}
+        {/* Mobile/off-canvas sidebar */}
         {sidebarOpen && (
           <div className="fixed inset-y-0 left-0 z-40">
             <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} onProfileClick={handleProfileClick} />
           </div>
         )}
 
-        {/* Static desktop sidebar (always visible on md+) */}
-        <div className="hidden md:block md:flex-shrink-0 md:relative md:z-40">
-          <Sidebar isOpen={true} inlineOnDesktop={true} onProfileClick={handleProfileClick} />
-        </div>
-
-        <main className="flex-1 flex flex-col items-center justify-center space-y-6 md:ml-72">
+        <main className="flex-1 flex flex-col items-center justify-center space-y-6">
 
           {/* Small notification toast for duplicate-upload / info messages */}
           {notificationMessage && (
@@ -511,7 +491,7 @@ const Home: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => navigate('/boost')}
-                  className="w-40 aspect-square rounded-xl p-4 flex flex-col items-center justify-center space-y-2 bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed"
+                  className="w-40 aspect-square rounded-2xl p-4 flex flex-col items-center justify-center space-y-2 bg-gray-100 disabled:opacity-60 disabled:cursor-not-allowed shadow-md"
                   aria-label="Boost Me"
                   disabled={uploading}
                 >
@@ -664,11 +644,11 @@ const Home: React.FC = () => {
           </div>
         )}
 
-        {/* Fixed bottom chat input bar (mobile) — adapts on md+ to sit after the sidebar and look like a floating input */}
-        <div className="fixed bottom-20 left-0 w-full bg-white px-4 pb-2 z-20 md:left-72 md:right-6 md:bottom-6 md:top-auto md:w-auto md:bg-transparent md:border-0 md:p-0">
-          <div className="flex items-center gap-2 max-w-3xl mx-auto md:bg-white md:rounded-full md:border md:border-gray-200 md:p-3 md:shadow-lg">
+        {/* Fixed bottom chat input bar (mobile) */}
+        <div className="fixed bottom-20 left-0 w-full bg-white px-4 pb-2 z-20">
+          <div className="flex items-center gap-2 max-w-3xl mx-auto">
             <div
-              className="flex-1 h-14 bg-gray-100 rounded-full transition-colors duration-300 flex items-center px-3"
+              className="flex-1 h-14 bg-gray-100 rounded-full transition-colors duration-300 flex items-center px-3 shadow-inner"
               onClick={() => setShowUploadPromptModal(true)}
             >
               <input

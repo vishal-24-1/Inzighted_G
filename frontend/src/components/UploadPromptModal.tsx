@@ -14,7 +14,7 @@ const UploadPromptModal: React.FC<UploadPromptModalProps> = ({ isOpen, onClose, 
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose} role="dialog" aria-modal="true" aria-labelledby="upload-prompt-title">
-            <div className="w-full max-w-md bg-white rounded-lg p-4 shadow text-left relative" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full max-w-md bg-white rounded-2xl p-4 shadow text-left relative" onClick={(e) => e.stopPropagation()}>
                 <button
                     className="absolute top-3 right-3 w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100"
                     onClick={onClose}
@@ -64,10 +64,13 @@ const UploadPromptModal: React.FC<UploadPromptModalProps> = ({ isOpen, onClose, 
                         )}
                     </button>
                     <button
-                        className="flex-1 bg-white border border-gray-200 text-gray-700 py-2 rounded-full text-sm"
+                        className="flex-1 bg-white border border-gray-200 text-gray-700 pb-1 pt-2 rounded-full text-sm"
                         onClick={onOpenLibrary}
                     >
-                        Library
+                        <span className="inline-flex items-center justify-center gap-2">
+                            <FileText size={16} className="text-black" />
+                            Library
+                        </span>
                     </button>
                 </div>
             </div>

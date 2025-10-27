@@ -61,6 +61,7 @@ const BoostMe: React.FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [showProfilePopup, setShowProfilePopup] = useState(false);
   const [activeInfoPopover, setActiveInfoPopover] = useState<string | null>(null);
+  const [showFullNameTooltip, setShowFullNameTooltip] = useState(false);
 
 
   useEffect(() => {
@@ -307,8 +308,8 @@ const BoostMe: React.FC = () => {
   };
 
   return (
-    <div className="w-full min-h-screen bg-white text-gray-900 px-2 pt-2 pb-24 flex flex-col overflow-x-hidden">
-      <header className="sticky top-0 w-full flex items-center justify-between mb-4 z-[45] bg-white px-2 py-2">
+    <div className="w-full min-h-screen bg-white text-gray-900 px-2 pt-16 pb-24 flex flex-col overflow-x-hidden" onTouchStart={() => setShowFullNameTooltip(false)}>
+      <header className="fixed top-0 w-full flex items-center justify-between mb-4 z-[45] bg-white px-2 py-3">
         <button
           className={`md:hidden w-10 h-10 flex items-center justify-center rounded-full border text-gray-700 bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-300 ${sidebarOpen ? '' : 'z-[55]'}`}
           aria-label={sidebarOpen ? 'Close menu' : 'Open menu'}
@@ -318,23 +319,41 @@ const BoostMe: React.FC = () => {
           <TextAlignStart size={18} />
         </button>
 
-        <div className="flex-1 text-center -ml-8">
+        <div className="flex-1 text-center -ml-8 relative">
           {/** Show truncated session/document name in header */}
           {(() => {
             const raw = selectedSession?.document_name || insights?.document_name || selectedSession?.title || 'Boost Me';
             const max = 30;
             const txt = String(raw);
             const truncated = txt.length > max ? txt.slice(0, max - 3) + '...' : txt;
-            return <h1 className="text-sm md:text-lg font-semibold">{truncated}</h1>;
+            return (
+              <>
+                <h1
+                  className="text-md font-semibold"
+                  title={raw}
+                  onTouchStart={(e) => {
+                    e.stopPropagation();
+                    setShowFullNameTooltip(true);
+                  }}
+                  onTouchEnd={(e) => {
+                    e.stopPropagation();
+                    // Keep it visible until touch elsewhere
+                  }}
+                >
+                  {truncated}
+                </h1>
+                {showFullNameTooltip && txt.length > max && (
+                  <div className="absolute top-full mt-1 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs px-2 py-1 rounded shadow-lg z-50 whitespace-nowrap">
+                    {raw}
+                  </div>
+                )}
+              </>
+            );
           })()}
         </div>
       </header>
 
       {/* Sidebar and backdrop */}
-      {sidebarOpen && (
-        // backdrop sits below the sidebar (which is z-60), so use z-50 here
-        <div className="fixed inset-0 bg-black/40 z-50" onClick={() => setSidebarOpen(false)} />
-      )}
       <Sidebar
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
