@@ -24,6 +24,7 @@ const ChatBot: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const hasAutoSentRef = useRef(false); // Prevent duplicate auto-send
+  const isListeningRef = useRef(false); // Track actual listening state
 
   useEffect(() => {
     // Initialize speech recognition
@@ -31,12 +32,18 @@ const ChatBot: React.FC = () => {
       const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
       const recognitionInstance = new SR();
       
-      recognitionInstance.continuous = false;
-      recognitionInstance.interimResults = false;
-      recognitionInstance.lang = 'en-US';
+      recognitionInstance.continuous = true;
+      recognitionInstance.interimResults = true;
+      recognitionInstance.lang = 'en-IN';
       
-      recognitionInstance.onstart = () => setIsListening(true);
-      recognitionInstance.onend = () => setIsListening(false);
+      recognitionInstance.onstart = () => {
+        setIsListening(true);
+        isListeningRef.current = true;
+      };
+      recognitionInstance.onend = () => {
+        setIsListening(false);
+        isListeningRef.current = false;
+      };
       
       recognitionInstance.onresult = (event: any) => {
         const transcript = event?.results?.[0]?.[0]?.transcript || '';
@@ -85,6 +92,26 @@ const ChatBot: React.FC = () => {
   }, [messages]);
 
   const handleSendMessage = async (messageOrEvent: React.FormEvent | string) => {
+    console.log('handleSendMessage called');
+    console.log('isListeningRef.current:', isListeningRef.current);
+    console.log('recognition:', recognition);
+    
+    // If the mic is currently listening, stop it when the user explicitly sends
+    // a message so the listening animation/state is cleared immediately.
+    if (recognition && isListeningRef.current) {
+      console.log('Attempting to stop recognition...');
+      try {
+        recognition.stop();
+        setIsListening(false);
+        isListeningRef.current = false;
+        console.log('Recognition stopped successfully');
+      } catch (e) {
+        console.error('Error stopping recognition before send:', e);
+      }
+    } else {
+      console.log('Recognition not active or not available');
+    }
+
     let messageText: string;
     
     if (typeof messageOrEvent === 'string') {
@@ -133,14 +160,16 @@ const ChatBot: React.FC = () => {
   };
 
   const startListening = () => {
-    if (recognition && !isListening) {
+    if (recognition && !isListeningRef.current) {
       recognition.start();
     }
   };
 
   const stopListening = () => {
-    if (recognition && isListening) {
+    if (recognition && isListeningRef.current) {
       recognition.stop();
+      setIsListening(false);
+      isListeningRef.current = false;
     }
   };
 

@@ -517,37 +517,37 @@ const Home: React.FC = () => {
           />
 
           {/* Notification toast removed; chat submit now opens DocumentSelector */}
-
-          {/* Uploading overlay */}
-          {uploading && (
-            <div className="fixed inset-0 z-50 min-h-screen flex items-center justify-center bg-black/40" role="status" aria-live="polite" aria-busy={uploading}>
-              <div className="bg-white rounded-lg p-6 flex flex-col items-center">
-                {/* Accessible spinner */}
-                <svg className="animate-spin h-12 w-12 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                </svg>
-                <p className="mt-3 text-gray-700">Uploading and processing document...</p>
-                <span className="sr-only">Uploading and processing document</span>
-              </div>
-            </div>
-          )}
-
-          {/* Starting session overlay */}
-          {startingSession && (
-            <div className="fixed inset-0 z-50 min-h-screen flex items-center justify-center bg-black/40" role="status" aria-live="polite" aria-busy={startingSession}>
-              <div className="bg-white rounded-lg p-6 flex flex-col items-center">
-                {/* Accessible spinner */}
-                <svg className="animate-spin h-12 w-12 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
-                </svg>
-                <p className="mt-3 text-gray-700">Starting your session...</p>
-                <span className="sr-only">Starting your session</span>
-              </div>
-            </div>
-          )}
         </main>
+
+        {/* Uploading overlay - moved outside main to cover entire screen including header */}
+        {uploading && (
+          <div className="fixed inset-0 z-[60] min-h-screen flex items-center justify-center bg-black/40" role="status" aria-live="polite" aria-busy={uploading}>
+            <div className="bg-white rounded-lg p-6 flex flex-col items-center">
+              {/* Accessible spinner */}
+              <svg className="animate-spin h-12 w-12 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              <p className="mt-3 text-gray-700">Uploading and processing document...</p>
+              <span className="sr-only">Uploading and processing document</span>
+            </div>
+          </div>
+        )}
+
+        {/* Starting session overlay - moved outside main to cover entire screen including header */}
+        {startingSession && (
+          <div className="fixed inset-0 z-[60] min-h-screen flex items-center justify-center bg-black/40" role="status" aria-live="polite" aria-busy={startingSession}>
+            <div className="bg-white rounded-lg p-6 flex flex-col items-center">
+              {/* Accessible spinner */}
+              <svg className="animate-spin h-12 w-12 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" aria-hidden="true">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+              </svg>
+              <p className="mt-3 text-gray-700">Starting your session...</p>
+              <span className="sr-only">Starting your session</span>
+            </div>
+          </div>
+        )}
 
         {/* Tutoring Ready Popup */}
         {showTutoringPopup && (

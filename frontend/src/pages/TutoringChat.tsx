@@ -81,7 +81,7 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
       recognitionInstance.continuous = true;
       // Enable interim results so we can show speaking text as it's recognized
       recognitionInstance.interimResults = true;
-      recognitionInstance.lang = 'en-US';
+      recognitionInstance.lang = 'en-IN';
 
       recognitionInstance.onstart = () => setIsListening(true);
 
@@ -570,6 +570,11 @@ const TutoringChat: React.FC<TutoringChatProps> = ({ sessionIdOverride, onEndSes
 
   const handleSubmitAnswer = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+
+    // Stop listening if mic is active when user submits
+    if (recognition && isListening) {
+      stopListening();
+    }
 
     if (!inputText.trim() || isLoading || sessionFinished || !sessionId) return;
 
