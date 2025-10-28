@@ -8,6 +8,7 @@ import { Plus, Search, SquarePen } from 'lucide-react';
 interface DocSession {
   id: string;
   document_name: string;
+  created_at?: string;
   updated_at: string;
   message_count: number;
 }
@@ -79,6 +80,18 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen = true, onClose, onProfileClic
         day: 'numeric',
         year: 'numeric'
       });
+    } catch {
+      return dateString;
+    }
+  };
+
+  const formatDateTime = (dateString?: string) => {
+    if (!dateString) return '';
+    try {
+      const d = new Date(dateString);
+      const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+      const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+      return `${date} | ${time}`;
     } catch {
       return dateString;
     }
@@ -177,9 +190,13 @@ const Sidebar: React.FC<SidebarProps> = ({ isOpen = true, onClose, onProfileClic
                       }}
                       className={`w-full text-left px-3 py-2 rounded-md ${selectedSessionId === s.id ? 'bg-gray-100' : 'bg-transparent'} hover:bg-gray-100 flex items-center justify-between overflow-hidden focus:outline-none focus:ring-0`}
                     >
-                      <div className="min-w-0">
-                        <div className="text-sm font-medium text-gray-900 truncate">{s.document_name}</div>
-                      </div>
+                        <div className="min-w-0">
+                          <div className="text-sm font-medium text-gray-900 truncate">{s.document_name}</div>
+                          {/* Created at shown underneath document name */}
+                          {s.created_at && (
+                            <div className="text-xs text-gray-400 mt-0.5 truncate">{formatDateTime(s.created_at)}</div>
+                          )}
+                        </div>
                       {selectedSessionId === s.id && (
                         <div className="text-blue-600 font-bold"></div>
                       )}

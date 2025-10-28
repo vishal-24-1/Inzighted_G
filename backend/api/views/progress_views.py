@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from ..serializers import ProgressSerializer
 from ..progress import get_progress_summary
+from ..progress import normalize_streak_on_view
 import logging
 import sentry_sdk
 
@@ -49,6 +50,13 @@ def get_user_progress(request):
     """
     try:
         user = request.user
+        # Normalize streak display on login/refresh: if the user missed yesterday
+        # we set streak_current to 0 so the UI shows 0 until they take a new test.
+        try:
+            normalize_streak_on_view(user)
+        except Exception:
+            # Do not fail the progress view if normalization fails; continue to return progress
+            logger.exception('Failed to normalize streak on view')
         
         # Get progress summary
         progress_data = get_progress_summary(user)

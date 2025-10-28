@@ -23,6 +23,7 @@ from django.conf import settings
 import logging
 import sentry_sdk
 from django.db.models import Sum
+from datetime import timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -535,6 +536,55 @@ def get_progress_summary(user):
         'streak': streak_summary,
         'batch': batch_summary,
     }
+
+
+def normalize_streak_on_view(user):
+    """
+    Ensure streak_current reflects whether the user has missed yesterday when
+    the user opens the app or refreshes the progress view.
+
+    Behavior:
+    - If user.streak_last_test_date is None -> keep streak_current as-is (usually 0)
+    - If last_test_date is today or yesterday -> no change
+    - If last_test_date is older than yesterday -> set streak_current to 0
+
+    This function is intentionally separate from update_on_test_completion
+    so that streak updates when a test is completed remain unchanged.
+    """
+    try:
+        with transaction.atomic():
+            from .models import User
+            u = User.objects.select_for_update().get(pk=user.pk)
+
+            if u.streak_last_test_date is None:
+                # No tests recorded yet - keep current streak (expected 0)
+                return False
+
+            today = timezone.now().date()
+            yesterday = today - timedelta(days=1)
+
+            if u.streak_last_test_date == today or u.streak_last_test_date == yesterday:
+                # streak is up-to-date
+                return False
+
+            # Missed one or more days -> show 0 until user takes a new test
+            if u.streak_current != 0:
+                u.streak_current = 0
+                u.save(update_fields=['streak_current'])
+                return True
+
+            return False
+    except Exception as e:
+        logger.error(f"Error normalizing streak on view for user {user.id}: {e}")
+        try:
+            sentry_sdk.capture_exception(e, extras={
+                'component': 'progress',
+                'function': 'normalize_streak_on_view',
+                'user_id': str(user.id),
+            })
+        except Exception:
+            pass
+        return False
 
 
 # ============================================================

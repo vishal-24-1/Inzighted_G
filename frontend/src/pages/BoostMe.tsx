@@ -46,6 +46,8 @@ interface SessionInsights {
   session_title: string;
   total_qa_pairs: number;
   insights: Insights;
+  created_at?: string;
+  updated_at?: string;
 }
 
 const BoostMe: React.FC = () => {
@@ -326,6 +328,20 @@ const BoostMe: React.FC = () => {
             const max = 30;
             const txt = String(raw);
             const truncated = txt.length > max ? txt.slice(0, max - 3) + '...' : txt;
+            const createdAt = selectedSession?.created_at || insights?.created_at || null;
+
+            const formatDateTime = (dateString?: string | null) => {
+              if (!dateString) return '';
+              try {
+                const d = new Date(dateString);
+                const date = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const time = d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+                return `${date} | ${time}`;
+              } catch {
+                return dateString as string;
+              }
+            };
+
             return (
               <>
                 <h1
@@ -342,6 +358,12 @@ const BoostMe: React.FC = () => {
                 >
                   {truncated}
                 </h1>
+
+                {/* Created at shown below the title */}
+                {createdAt && (
+                  <div className="text-xs text-gray-500 mt-0.5">{formatDateTime(createdAt)}</div>
+                )}
+
                 {showFullNameTooltip && txt.length > max && (
                   <div className="absolute top-full mt-1 left-1/2 transform -translate-x-1/2 bg-black text-white text-xs px-2 py-1 rounded shadow-lg z-50 whitespace-nowrap">
                     {raw}
@@ -358,7 +380,7 @@ const BoostMe: React.FC = () => {
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onProfileClick={() => setShowProfilePopup(true)}
-        sessions={sessions.map(s => ({ id: s.id, document_name: s.document_name, updated_at: s.updated_at, message_count: s.message_count }))}
+        sessions={sessions.map(s => ({ id: s.id, document_name: s.document_name, created_at: s.created_at, updated_at: s.updated_at, message_count: s.message_count }))}
         selectedSessionId={selectedSession?.id ?? null}
         onSessionSelect={(sessionId: string) => {
           const session = sessions.find(s => s.id === sessionId);
